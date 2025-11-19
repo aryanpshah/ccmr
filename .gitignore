@@ -1,0 +1,19 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Data outputs
+/data/processed/
+/data/splits/
+/results/
+/logs/
+/checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
