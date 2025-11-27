@@ -12,3 +12,5 @@ tqdm
 batchgenerators
 batchgeneratorsv2
 yacs
+monai[einops]
+tensorboard
