@@ -73,7 +73,10 @@ def load_and_process_mask(case_id: str) -> np.ndarray:
 
     resampled = ndimage.zoom(mask, zoom=zoom_factors, order=0)  # nearest neighbor for labels
     processed = center_crop_or_pad(resampled, TARGET_SHAPE)
-    return processed.astype(np.uint8)
+    processed = processed.astype(np.uint8)
+    # Ensure labels are within expected set {0,1,2}; drop any stray labels.
+    processed = np.clip(processed, 0, 2)
+    return processed
 
 
 def save_mask(mask_zyx: np.ndarray, out_path: Path) -> None:
