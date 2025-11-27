@@ -10,9 +10,13 @@ ENV/
 # Data outputs
 /data/processed/
 /data/splits/
+/data/nnunet/
 /results/
 /logs/
 /checkpoints/
+
+# Large artifacts
+*.npz
 
 # OS files
 .DS_Store
