@@ -3,3 +3,12 @@ pandas
 nibabel
 scipy
 scikit-learn
+matplotlib
+nnunetv2
+torch>=2.1
+scikit-image
+SimpleITK
+tqdm
+batchgenerators
+batchgeneratorsv2
+yacs
