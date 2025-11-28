@@ -1,0 +1,132 @@
+[
+    {
+        "train": [
+            "pat13",
+            "pat15",
+            "pat16",
+            "pat22",
+            "pat25",
+            "pat27",
+            "pat32",
+            "pat35",
+            "pat36",
+            "pat44",
+            "pat45",
+            "pat53",
+            "pat54",
+            "pat59",
+            "pat7",
+            "pat9"
+        ],
+        "val": [
+            "pat17",
+            "pat34",
+            "pat47",
+            "pat58"
+        ]
+    },
+    {
+        "train": [
+            "pat15",
+            "pat16",
+            "pat17",
+            "pat22",
+            "pat25",
+            "pat27",
+            "pat32",
+            "pat34",
+            "pat35",
+            "pat44",
+            "pat47",
+            "pat53",
+            "pat58",
+            "pat59",
+            "pat7",
+            "pat9"
+        ],
+        "val": [
+            "pat13",
+            "pat36",
+            "pat45",
+            "pat54"
+        ]
+    },
+    {
+        "train": [
+            "pat13",
+            "pat15",
+            "pat16",
+            "pat17",
+            "pat22",
+            "pat25",
+            "pat34",
+            "pat35",
+            "pat36",
+            "pat45",
+            "pat47",
+            "pat53",
+            "pat54",
+            "pat58",
+            "pat7",
+            "pat9"
+        ],
+        "val": [
+            "pat27",
+            "pat32",
+            "pat44",
+            "pat59"
+        ]
+    },
+    {
+        "train": [
+            "pat13",
+            "pat15",
+            "pat16",
+            "pat17",
+            "pat22",
+            "pat25",
+            "pat27",
+            "pat32",
+            "pat34",
+            "pat36",
+            "pat44",
+            "pat45",
+            "pat47",
+            "pat54",
+            "pat58",
+            "pat59"
+        ],
+        "val": [
+            "pat35",
+            "pat53",
+            "pat7",
+            "pat9"
+        ]
+    },
+    {
+        "train": [
+            "pat13",
+            "pat17",
+            "pat27",
+            "pat32",
+            "pat34",
+            "pat35",
+            "pat36",
+            "pat44",
+            "pat45",
+            "pat47",
+            "pat53",
+            "pat54",
+            "pat58",
+            "pat59",
+            "pat7",
+            "pat9"
+        ],
+        "val": [
+            "pat15",
+            "pat16",
+            "pat22",
+            "pat25"
+        ]
+    }
+]

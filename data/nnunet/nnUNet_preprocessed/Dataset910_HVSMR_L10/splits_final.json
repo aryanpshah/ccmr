@@ -1,0 +1,82 @@
+[
+    {
+        "train": [
+            "pat17",
+            "pat27",
+            "pat34",
+            "pat35",
+            "pat36",
+            "pat47",
+            "pat7",
+            "pat9"
+        ],
+        "val": [
+            "pat13",
+            "pat54"
+        ]
+    },
+    {
+        "train": [
+            "pat13",
+            "pat17",
+            "pat27",
+            "pat35",
+            "pat36",
+            "pat47",
+            "pat54",
+            "pat7"
+        ],
+        "val": [
+            "pat34",
+            "pat9"
+        ]
+    },
+    {
+        "train": [
+            "pat13",
+            "pat17",
+            "pat27",
+            "pat34",
+            "pat36",
+            "pat54",
+            "pat7",
+            "pat9"
+        ],
+        "val": [
+            "pat35",
+            "pat47"
+        ]
+    },
+    {
+        "train": [
+            "pat13",
+            "pat27",
+            "pat34",
+            "pat35",
+            "pat36",
+            "pat47",
+            "pat54",
+            "pat9"
+        ],
+        "val": [
+            "pat17",
+            "pat7"
+        ]
+    },
+    {
+        "train": [
+            "pat13",
+            "pat17",
+            "pat34",
+            "pat35",
+            "pat47",
+            "pat54",
+            "pat7",
+            "pat9"
+        ],
+        "val": [
+            "pat27",
+            "pat36"
+        ]
+    }
+]

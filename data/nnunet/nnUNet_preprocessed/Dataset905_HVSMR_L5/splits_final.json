@@ -1,0 +1,57 @@
+[
+    {
+        "train": [
+            "pat17",
+            "pat36",
+            "pat54",
+            "pat9"
+        ],
+        "val": [
+            "pat13"
+        ]
+    },
+    {
+        "train": [
+            "pat13",
+            "pat17",
+            "pat36",
+            "pat54"
+        ],
+        "val": [
+            "pat9"
+        ]
+    },
+    {
+        "train": [
+            "pat13",
+            "pat17",
+            "pat36",
+            "pat9"
+        ],
+        "val": [
+            "pat54"
+        ]
+    },
+    {
+        "train": [
+            "pat13",
+            "pat36",
+            "pat54",
+            "pat9"
+        ],
+        "val": [
+            "pat17"
+        ]
+    },
+    {
+        "train": [
+            "pat13",
+            "pat17",
+            "pat54",
+            "pat9"
+        ],
+        "val": [
+            "pat36"
+        ]
+    }
+]

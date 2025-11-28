@@ -1,0 +1,53 @@
+{
+    "name": "HVSMR processed",
+    "description": "HVSMR 2016 processed volumes (1mm, 192^3) with cropped masks",
+    "reference": "HVSMR challenge",
+    "licence": "HVSMR challenge terms",
+    "release": "1.0",
+    "tensorImageSize": "3D",
+    "file_ending": ".nii.gz",
+    "channel_names": {
+        "0": "MRI"
+    },
+    "labels": {
+        "background": 0,
+        "blood_pool": 1,
+        "myocardium": 2
+    },
+    "numTraining": 5,
+    "numTest": 10,
+    "training": [
+        {
+            "image": "./imagesTr/pat17_0000.nii.gz",
+            "label": "./labelsTr/pat17.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat13_0000.nii.gz",
+            "label": "./labelsTr/pat13.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat54_0000.nii.gz",
+            "label": "./labelsTr/pat54.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat36_0000.nii.gz",
+            "label": "./labelsTr/pat36.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat9_0000.nii.gz",
+            "label": "./labelsTr/pat9.nii.gz"
+        }
+    ],
+    "test": [
+        "./imagesTs/pat6_0000.nii.gz",
+        "./imagesTs/pat31_0000.nii.gz",
+        "./imagesTs/pat56_0000.nii.gz",
+        "./imagesTs/pat19_0000.nii.gz",
+        "./imagesTs/pat37_0000.nii.gz",
+        "./imagesTs/pat11_0000.nii.gz",
+        "./imagesTs/pat24_0000.nii.gz",
+        "./imagesTs/pat49_0000.nii.gz",
+        "./imagesTs/pat38_0000.nii.gz",
+        "./imagesTs/pat42_0000.nii.gz"
+    ]
+}
