@@ -8,9 +8,9 @@ venv/
 ENV/
 
 # Data outputs
-/data/processed/
-/data/splits/
-/data/nnunet/
+# /data/processed/
+# /data/splits/
+# /data/nnunet/
 /results/
 /logs/
 /checkpoints/
