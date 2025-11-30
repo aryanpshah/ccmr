@@ -12,7 +12,9 @@ ENV/
 # /data/splits/
 # /data/nnunet/
 /results/
-/logs/
+/logs/*
+!logs/nnunet/
+!logs/nnunet/*.metrics.json
 /checkpoints/
 
 # Large artifacts
