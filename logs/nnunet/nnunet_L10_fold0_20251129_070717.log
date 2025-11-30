@@ -1,0 +1,6 @@
+usage: nnUNetv2_train [-h] [-tr TR] [-p P]
+                      [-pretrained_weights PRETRAINED_WEIGHTS]
+                      [-num_gpus NUM_GPUS] [--npz] [--c] [--val] [--val_best]
+                      [--disable_checkpointing] [-device DEVICE]
+                      dataset_name_or_id configuration fold
+nnUNetv2_train: error: unrecognized arguments: --device cuda

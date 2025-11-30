@@ -1,0 +1,296 @@
+{
+    "foreground_mean": {
+        "Dice": 0.878606642637656,
+        "FN": 20106.4,
+        "FP": 15117.300000000001,
+        "IoU": 0.806968000858341,
+        "TN": 6900637.6,
+        "TP": 142026.7,
+        "n_pred": 157144.0,
+        "n_ref": 162133.09999999998
+    },
+    "mean": {
+        "1": {
+            "Dice": 0.852830532684577,
+            "FN": 19789.6,
+            "FP": 3376.9,
+            "IoU": 0.7842061037842136,
+            "TN": 6992373.7,
+            "TP": 62347.8,
+            "n_pred": 65724.7,
+            "n_ref": 82137.4
+        },
+        "2": {
+            "Dice": 0.904382752590735,
+            "FN": 20423.2,
+            "FP": 26857.7,
+            "IoU": 0.8297298979324683,
+            "TN": 6808901.5,
+            "TP": 221705.6,
+            "n_pred": 248563.3,
+            "n_ref": 242128.8
+        }
+    },
+    "metric_per_case": [
+        {
+            "metrics": {
+                "1": {
+                    "Dice": 0.9598882644408234,
+                    "FN": 3615,
+                    "FP": 8447,
+                    "IoU": 0.922870333661581,
+                    "TN": 6921502,
+                    "TP": 144324,
+                    "n_pred": 152771,
+                    "n_ref": 147939
+                },
+                "2": {
+                    "Dice": 0.9455733689145561,
+                    "FN": 31669,
+                    "FP": 29476,
+                    "IoU": 0.8967654467728755,
+                    "TN": 6485596,
+                    "TP": 531147,
+                    "n_pred": 560623,
+                    "n_ref": 562816
+                }
+            },
+            "prediction_file": "data/nnunet/predictions/L40/pat11.nii.gz",
+            "reference_file": "/workspace/onedrive/ccmr/ccmr/data/nnunet/nnUNet_raw/Dataset940_HVSMR_L40/labelsTs/pat11.nii.gz"
+        },
+        {
+            "metrics": {
+                "1": {
+                    "Dice": 0.9501894672220625,
+                    "FN": 9250,
+                    "FP": 13793,
+                    "IoU": 0.9051056715041099,
+                    "TN": 6835060,
+                    "TP": 219785,
+                    "n_pred": 233578,
+                    "n_ref": 229035
+                },
+                "2": {
+                    "Dice": 0.9516070931274754,
+                    "FN": 38546,
+                    "FP": 12369,
+                    "IoU": 0.9076817354346928,
+                    "TN": 6526372,
+                    "TP": 500601,
+                    "n_pred": 512970,
+                    "n_ref": 539147
+                }
+            },
+            "prediction_file": "data/nnunet/predictions/L40/pat19.nii.gz",
+            "reference_file": "/workspace/onedrive/ccmr/ccmr/data/nnunet/nnUNet_raw/Dataset940_HVSMR_L40/labelsTs/pat19.nii.gz"
+        },
+        {
+            "metrics": {
+                "1": {
+                    "Dice": 0.9553986844216268,
+                    "FN": 1249,
+                    "FP": 1531,
+                    "IoU": 0.9146060512978037,
+                    "TN": 7045333,
+                    "TP": 29775,
+                    "n_pred": 31306,
+                    "n_ref": 31024
+                },
+                "2": {
+                    "Dice": 0.9406216064110592,
+                    "FN": 6610,
+                    "FP": 8372,
+                    "IoU": 0.8878995570453729,
+                    "TN": 6944240,
+                    "TP": 118666,
+                    "n_pred": 127038,
+                    "n_ref": 125276
+                }
+            },
+            "prediction_file": "data/nnunet/predictions/L40/pat24.nii.gz",
+            "reference_file": "/workspace/onedrive/ccmr/ccmr/data/nnunet/nnUNet_raw/Dataset940_HVSMR_L40/labelsTs/pat24.nii.gz"
+        },
+        {
+            "metrics": {
+                "1": {
+                    "Dice": 0.8925510490820532,
+                    "FN": 12805,
+                    "FP": 5549,
+                    "IoU": 0.8059523180208278,
+                    "TN": 6983303,
+                    "TP": 76231,
+                    "n_pred": 81780,
+                    "n_ref": 89036
+                },
+                "2": {
+                    "Dice": 0.9026883460065793,
+                    "FN": 31996,
+                    "FP": 40182,
+                    "IoU": 0.8226362517170456,
+                    "TN": 6670939,
+                    "TP": 334771,
+                    "n_pred": 374953,
+                    "n_ref": 366767
+                }
+            },
+            "prediction_file": "data/nnunet/predictions/L40/pat31.nii.gz",
+            "reference_file": "/workspace/onedrive/ccmr/ccmr/data/nnunet/nnUNet_raw/Dataset940_HVSMR_L40/labelsTs/pat31.nii.gz"
+        },
+        {
+            "metrics": {
+                "1": {
+                    "Dice": 0.8864748939344491,
+                    "FN": 6386,
+                    "FP": 919,
+                    "IoU": 0.796097806062636,
+                    "TN": 7042062,
+                    "TP": 28521,
+                    "n_pred": 29440,
+                    "n_ref": 34907
+                },
+                "2": {
+                    "Dice": 0.9169004432305045,
+                    "FN": 5959,
+                    "FP": 10896,
+                    "IoU": 0.8465523206059613,
+                    "TN": 6968046,
+                    "TP": 92987,
+                    "n_pred": 103883,
+                    "n_ref": 98946
+                }
+            },
+            "prediction_file": "data/nnunet/predictions/L40/pat37.nii.gz",
+            "reference_file": "/workspace/onedrive/ccmr/ccmr/data/nnunet/nnUNet_raw/Dataset940_HVSMR_L40/labelsTs/pat37.nii.gz"
+        },
+        {
+            "metrics": {
+                "1": {
+                    "Dice": 0.9003560175144248,
+                    "FN": 2136,
+                    "FP": 299,
+                    "IoU": 0.8187704674010122,
+                    "TN": 7064452,
+                    "TP": 11001,
+                    "n_pred": 11300,
+                    "n_ref": 13137
+                },
+                "2": {
+                    "Dice": 0.9051030697265373,
+                    "FN": 3611,
+                    "FP": 8906,
+                    "IoU": 0.8266559570136687,
+                    "TN": 7005679,
+                    "TP": 59692,
+                    "n_pred": 68598,
+                    "n_ref": 63303
+                }
+            },
+            "prediction_file": "data/nnunet/predictions/L40/pat38.nii.gz",
+            "reference_file": "/workspace/onedrive/ccmr/ccmr/data/nnunet/nnUNet_raw/Dataset940_HVSMR_L40/labelsTs/pat38.nii.gz"
+        },
+        {
+            "metrics": {
+                "1": {
+                    "Dice": 0.8649867374005306,
+                    "FN": 4506,
+                    "FP": 1602,
+                    "IoU": 0.7620939471839214,
+                    "TN": 7052214,
+                    "TP": 19566,
+                    "n_pred": 21168,
+                    "n_ref": 24072
+                },
+                "2": {
+                    "Dice": 0.8929013610387779,
+                    "FN": 14570,
+                    "FP": 9737,
+                    "IoU": 0.8065237636608216,
+                    "TN": 6952255,
+                    "TP": 101326,
+                    "n_pred": 111063,
+                    "n_ref": 115896
+                }
+            },
+            "prediction_file": "data/nnunet/predictions/L40/pat42.nii.gz",
+            "reference_file": "/workspace/onedrive/ccmr/ccmr/data/nnunet/nnUNet_raw/Dataset940_HVSMR_L40/labelsTs/pat42.nii.gz"
+        },
+        {
+            "metrics": {
+                "1": {
+                    "Dice": 0.9652910094482312,
+                    "FN": 1086,
+                    "FP": 681,
+                    "IoU": 0.9329106234338218,
+                    "TN": 7051550,
+                    "TP": 24571,
+                    "n_pred": 25252,
+                    "n_ref": 25657
+                },
+                "2": {
+                    "Dice": 0.9097908361766576,
+                    "FN": 8354,
+                    "FP": 4839,
+                    "IoU": 0.8345103548625833,
+                    "TN": 6998167,
+                    "TP": 66528,
+                    "n_pred": 71367,
+                    "n_ref": 74882
+                }
+            },
+            "prediction_file": "data/nnunet/predictions/L40/pat49.nii.gz",
+            "reference_file": "/workspace/onedrive/ccmr/ccmr/data/nnunet/nnUNet_raw/Dataset940_HVSMR_L40/labelsTs/pat49.nii.gz"
+        },
+        {
+            "metrics": {
+                "1": {
+                    "Dice": 0.23332598927083706,
+                    "FN": 149616,
+                    "FP": 15,
+                    "IoU": 0.1320707656612529,
+                    "TN": 6905488,
+                    "TP": 22769,
+                    "n_pred": 22784,
+                    "n_ref": 172385
+                },
+                "2": {
+                    "Dice": 0.7472642254862697,
+                    "FN": 56854,
+                    "FP": 129942,
+                    "IoU": 0.596505855974563,
+                    "TN": 6614942,
+                    "TP": 276150,
+                    "n_pred": 406092,
+                    "n_ref": 333004
+                }
+            },
+            "prediction_file": "data/nnunet/predictions/L40/pat56.nii.gz",
+            "reference_file": "/workspace/onedrive/ccmr/ccmr/data/nnunet/nnUNet_raw/Dataset940_HVSMR_L40/labelsTs/pat56.nii.gz"
+        },
+        {
+            "metrics": {
+                "1": {
+                    "Dice": 0.91984321411073,
+                    "FN": 7247,
+                    "FP": 933,
+                    "IoU": 0.8515830536151683,
+                    "TN": 7022773,
+                    "TP": 46935,
+                    "n_pred": 47868,
+                    "n_ref": 54182
+                },
+                "2": {
+                    "Dice": 0.9313771757889334,
+                    "FN": 6063,
+                    "FP": 13858,
+                    "IoU": 0.8715677362370978,
+                    "TN": 6922779,
+                    "TP": 135188,
+                    "n_pred": 149046,
+                    "n_ref": 141251
+                }
+            },
+            "prediction_file": "data/nnunet/predictions/L40/pat6.nii.gz",
+            "reference_file": "/workspace/onedrive/ccmr/ccmr/data/nnunet/nnUNet_raw/Dataset940_HVSMR_L40/labelsTs/pat6.nii.gz"
+        }
+    ]
+}
