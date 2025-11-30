@@ -1,0 +1,193 @@
+{
+    "name": "HVSMR processed",
+    "description": "HVSMR 2016 processed volumes (1mm, 192^3) with cropped masks",
+    "reference": "HVSMR challenge",
+    "licence": "HVSMR challenge terms",
+    "release": "1.0",
+    "tensorImageSize": "3D",
+    "file_ending": ".nii.gz",
+    "channel_names": {
+        "0": "MRI"
+    },
+    "labels": {
+        "background": 0,
+        "blood_pool": 1,
+        "myocardium": 2
+    },
+    "numTraining": 40,
+    "numTest": 10,
+    "training": [
+        {
+            "image": "./imagesTr/pat17_0000.nii.gz",
+            "label": "./labelsTr/pat17.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat13_0000.nii.gz",
+            "label": "./labelsTr/pat13.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat54_0000.nii.gz",
+            "label": "./labelsTr/pat54.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat36_0000.nii.gz",
+            "label": "./labelsTr/pat36.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat9_0000.nii.gz",
+            "label": "./labelsTr/pat9.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat27_0000.nii.gz",
+            "label": "./labelsTr/pat27.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat35_0000.nii.gz",
+            "label": "./labelsTr/pat35.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat7_0000.nii.gz",
+            "label": "./labelsTr/pat7.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat47_0000.nii.gz",
+            "label": "./labelsTr/pat47.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat34_0000.nii.gz",
+            "label": "./labelsTr/pat34.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat44_0000.nii.gz",
+            "label": "./labelsTr/pat44.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat59_0000.nii.gz",
+            "label": "./labelsTr/pat59.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat58_0000.nii.gz",
+            "label": "./labelsTr/pat58.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat16_0000.nii.gz",
+            "label": "./labelsTr/pat16.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat22_0000.nii.gz",
+            "label": "./labelsTr/pat22.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat32_0000.nii.gz",
+            "label": "./labelsTr/pat32.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat25_0000.nii.gz",
+            "label": "./labelsTr/pat25.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat45_0000.nii.gz",
+            "label": "./labelsTr/pat45.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat15_0000.nii.gz",
+            "label": "./labelsTr/pat15.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat53_0000.nii.gz",
+            "label": "./labelsTr/pat53.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat57_0000.nii.gz",
+            "label": "./labelsTr/pat57.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat2_0000.nii.gz",
+            "label": "./labelsTr/pat2.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat28_0000.nii.gz",
+            "label": "./labelsTr/pat28.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat20_0000.nii.gz",
+            "label": "./labelsTr/pat20.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat0_0000.nii.gz",
+            "label": "./labelsTr/pat0.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat30_0000.nii.gz",
+            "label": "./labelsTr/pat30.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat5_0000.nii.gz",
+            "label": "./labelsTr/pat5.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat3_0000.nii.gz",
+            "label": "./labelsTr/pat3.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat41_0000.nii.gz",
+            "label": "./labelsTr/pat41.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat52_0000.nii.gz",
+            "label": "./labelsTr/pat52.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat26_0000.nii.gz",
+            "label": "./labelsTr/pat26.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat10_0000.nii.gz",
+            "label": "./labelsTr/pat10.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat23_0000.nii.gz",
+            "label": "./labelsTr/pat23.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat4_0000.nii.gz",
+            "label": "./labelsTr/pat4.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat18_0000.nii.gz",
+            "label": "./labelsTr/pat18.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat21_0000.nii.gz",
+            "label": "./labelsTr/pat21.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat29_0000.nii.gz",
+            "label": "./labelsTr/pat29.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat39_0000.nii.gz",
+            "label": "./labelsTr/pat39.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat40_0000.nii.gz",
+            "label": "./labelsTr/pat40.nii.gz"
+        },
+        {
+            "image": "./imagesTr/pat1_0000.nii.gz",
+            "label": "./labelsTr/pat1.nii.gz"
+        }
+    ],
+    "test": [
+        "./imagesTs/pat6_0000.nii.gz",
+        "./imagesTs/pat31_0000.nii.gz",
+        "./imagesTs/pat56_0000.nii.gz",
+        "./imagesTs/pat19_0000.nii.gz",
+        "./imagesTs/pat37_0000.nii.gz",
+        "./imagesTs/pat11_0000.nii.gz",
+        "./imagesTs/pat24_0000.nii.gz",
+        "./imagesTs/pat49_0000.nii.gz",
+        "./imagesTs/pat38_0000.nii.gz",
+        "./imagesTs/pat42_0000.nii.gz"
+    ]
+}
