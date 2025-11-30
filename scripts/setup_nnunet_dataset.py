@@ -102,9 +102,11 @@ def build_dataset(train_ids: Sequence[str], test_ids: Sequence[str], dataset_nam
     images_tr = dataset_dir / "imagesTr"
     labels_tr = dataset_dir / "labelsTr"
     images_ts = dataset_dir / "imagesTs"
+    labels_ts = dataset_dir / "labelsTs"  # not used by nnU-Net, but handy for local eval
 
     dataset_dir.mkdir(parents=True, exist_ok=True)
     images_ts.mkdir(parents=True, exist_ok=True)
+    labels_ts.mkdir(parents=True, exist_ok=True)
 
     print(f"Writing nnU-Net dataset to {dataset_dir}")
     for case_id in train_ids:
@@ -116,6 +118,10 @@ def build_dataset(train_ids: Sequence[str], test_ids: Sequence[str], dataset_nam
     for case_id in test_ids:
         print(f"  test: {case_id}")
         copy_image(case_id, images_ts)
+        # Store labels for the test split so we can run local evaluation/inspection.
+        # nnU-Net ignores labelsTs during training/inference.
+        mask = load_and_process_mask(case_id)
+        save_mask(mask, labels_ts / f"{case_id}.nii.gz")
 
     dataset_json = {
         "name": "HVSMR processed",
