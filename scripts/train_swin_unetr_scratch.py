@@ -75,8 +75,9 @@ def validate_epoch(
             dice_metric(y_pred=preds, y=labels_list)
 
     dice_per_class = dice_metric.aggregate().cpu().numpy()
+    dice_per_class = np.squeeze(dice_per_class)
     dice_metric.reset()
-    mean_dice = float(dice_per_class.mean())
+    mean_dice = float(np.mean(dice_per_class))
     return mean_dice, dice_per_class
 
 
@@ -132,7 +133,8 @@ def main():
         print(f"  Mean train loss: {train_loss:.4f}")
 
         val_mean, val_per_class = validate_epoch(model, val_loader, device, roi_size)
-        per_class_str = ", ".join(f"{i}:{v:.3f}" for i, v in enumerate(val_per_class))
+        val_per_class_vec = np.asarray(val_per_class).ravel()
+        per_class_str = ", ".join(f"{i}:{float(v):.3f}" for i, v in enumerate(val_per_class_vec))
         print(f"  Val mean Dice: {val_mean:.4f} | per-class: [{per_class_str}]")
 
         torch.save(model.state_dict(), last_path)
