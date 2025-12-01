@@ -74,11 +74,13 @@ def validate_epoch(
             labels_list = [post_label(i) for i in decollate_batch(labels)]
             dice_metric(y_pred=preds, y=labels_list)
 
-    dice_per_class = dice_metric.aggregate().cpu().numpy()
-    dice_per_class = np.squeeze(dice_per_class)
+    dice = dice_metric.aggregate()  # shape [N, C] or flattened
+    dice_np = dice.cpu().numpy()
+    mean_dice_all = float(np.nanmean(dice_np))
+    mean_dice_per_class = np.nanmean(dice_np.reshape(-1, NUM_CLASSES), axis=0).tolist()
+    mean_fg_dice = float(np.nanmean(mean_dice_per_class[1:]))
     dice_metric.reset()
-    mean_dice = float(np.mean(dice_per_class))
-    return mean_dice, dice_per_class
+    return mean_dice_all, mean_dice_per_class, mean_fg_dice
 
 
 def main():
@@ -132,10 +134,11 @@ def main():
         scheduler.step()
         print(f"  Mean train loss: {train_loss:.4f}")
 
-        val_mean, val_per_class = validate_epoch(model, val_loader, device, roi_size)
-        val_per_class_vec = np.asarray(val_per_class).ravel()
-        per_class_str = ", ".join(f"{i}:{float(v):.3f}" for i, v in enumerate(val_per_class_vec))
-        print(f"  Val mean Dice: {val_mean:.4f} | per-class: [{per_class_str}]")
+        val_mean_all, val_per_class_mean, val_mean_fg = validate_epoch(model, val_loader, device, roi_size)
+        per_class_str = ", ".join(f"{i}:{float(v):.3f}" for i, v in enumerate(val_per_class_mean))
+        print(f"  Val mean Dice (all): {val_mean_all:.4f}")
+        print(f"  Val mean Dice (fg): {val_mean_fg:.4f}")
+        print(f"  Per-class mean Dice: [{per_class_str}]")
 
         torch.save(model.state_dict(), last_path)
         if val_mean > best_dice:
