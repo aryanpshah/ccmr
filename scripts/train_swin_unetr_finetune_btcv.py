@@ -36,7 +36,12 @@ def load_pretrained(model: torch.nn.Module, checkpoint: Path) -> None:
     ckpt = torch.load(checkpoint, map_location="cpu")
     state = ckpt["state_dict"] if "state_dict" in ckpt else ckpt
     state = {k.replace("module.", "", 1): v for k, v in state.items()}
-    result = model.load_state_dict(state, strict=False)
+    model_state = model.state_dict()
+    filtered_state = {k: v for k, v in state.items() if k in model_state and v.shape == model_state[k].shape}
+    dropped = sorted(set(state.keys()) - set(filtered_state.keys()))
+    if dropped:
+        print(f"Dropping mismatched keys (e.g., head): {dropped}")
+    result = model.load_state_dict(filtered_state, strict=False)
     print(f"Loaded BTCV Swin-UNETR weights for fine-tuning. Missing: {result.missing_keys}, Unexpected: {result.unexpected_keys}")
 
 
