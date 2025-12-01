@@ -152,8 +152,8 @@ def main():
         print(f"  Per-class mean Dice: [{per_class_str}]")
 
         torch.save(model.state_dict(), last_path)
-        if val_mean > best_dice:
-            best_dice = val_mean
+        if val_mean_all > best_dice:
+            best_dice = val_mean_all
             torch.save(model.state_dict(), best_path)
             print(f"  New best model saved to {best_path} (Dice={best_dice:.4f})")
 
