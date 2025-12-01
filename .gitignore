@@ -4,8 +4,12 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.venv*/
+.venv3*/
 venv/
 ENV/
+*/.venv/
+*/.venv*/
 
 # Data outputs
 # /data/processed/
