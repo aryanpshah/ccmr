@@ -39,6 +39,13 @@ from monai.transforms import (
 )
 from monai.utils import set_determinism
 from monai.data import CacheDataset
+import monai.transforms.transform as monai_transform_mod
+import monai.utils.misc as monai_misc_mod
+
+# Guard against uint32 overflow in MONAI seeding on some platforms.
+SAFE_MAX_SEED = np.iinfo(np.uint32).max
+monai_transform_mod.MAX_SEED = SAFE_MAX_SEED
+monai_misc_mod.MAX_SEED = SAFE_MAX_SEED
 
 try:
     from monai.transforms import AddChanneld as ChannelFirstd  # preferred when available
