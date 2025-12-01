@@ -121,20 +121,52 @@ def load_case_ids(split_file: str) -> List[str]:
     return case_ids
 
 
-def build_dataset_dicts(data_root: str, case_ids: List[str]) -> List[Dict[str, str]]:
+def build_dataset_dicts(
+    data_root: str,
+    case_ids: List[str],
+    label_root: str | None = None,
+) -> List[Dict[str, str]]:
     """
     Build MONAI dataset dicts for a list of case IDs.
-    Assumes files are named {case_id}_image.nii.gz and {case_id}_label.nii.gz
-    under imagesTr/ and labelsTr/ respectively.
+    Supports nnU-Net-style (imagesTr/labelsTr) or HVSMR processed naming.
+    If label_root is provided, labels are resolved there; otherwise tries
+    imagesTr/labelsTr, then defaults to data/raw/HVSMR2/cropped_norm if present.
     """
     data_root = str(data_root)
+    img_root = Path(data_root) / "imagesTr" if (Path(data_root) / "imagesTr").is_dir() else Path(data_root)
+    # Resolve label root
+    if label_root is not None:
+        lbl_root = Path(label_root)
+    elif (Path(data_root) / "labelsTr").is_dir():
+        lbl_root = Path(data_root) / "labelsTr"
+    elif Path("data/raw/HVSMR2/cropped_norm").exists():
+        lbl_root = Path("data/raw/HVSMR2/cropped_norm")
+    else:
+        lbl_root = Path(data_root)
+
     dicts: List[Dict[str, str]] = []
     for cid in case_ids:
-        img = Path(data_root) / "imagesTr" / f"{cid}_image.nii.gz"
-        lbl = Path(data_root) / "labelsTr" / f"{cid}_label.nii.gz"
-        if not img.exists() or not lbl.exists():
-            raise FileNotFoundError(f"Missing image/label for case {cid}: {img}, {lbl}")
-        dicts.append({"image": str(img), "label": str(lbl)})
+        img_candidates = [
+            img_root / f"{cid}_image.nii.gz",
+            img_root / f"{cid}_image.nii",
+            img_root / f"{cid}_img_proc.nii.gz",
+            img_root / f"{cid}_img_proc.nii",
+            img_root / f"{cid}.nii.gz",
+            img_root / f"{cid}.nii",
+        ]
+        lbl_candidates = [
+            lbl_root / f"{cid}_label.nii.gz",
+            lbl_root / f"{cid}_label.nii",
+            lbl_root / f"{cid}_seg.nii.gz",
+            lbl_root / f"{cid}_seg.nii",
+            lbl_root / f"{cid}_cropped_seg.nii.gz",
+            lbl_root / f"{cid}_cropped_seg.nii",
+        ]
+        img_path = next((p for p in img_candidates if p.exists()), None)
+        lbl_path = next((p for p in lbl_candidates if p.exists()), None)
+        if img_path is None or lbl_path is None:
+            raise FileNotFoundError(f"Missing image/label for case {cid}: {img_candidates}, {lbl_candidates}")
+        dicts.append({"image": str(img_path), "label": str(lbl_path)})
     return dicts
 
 
@@ -142,6 +174,7 @@ def create_hvsmr_loaders(
     data_root: str,
     train_split_file: str,
     val_split_file: str,
+    label_root: str | None = None,
     roi_size: Tuple[int, int, int] = (96, 96, 96),
     batch_size: int = 1,
     num_workers: int = 4,
@@ -153,8 +186,8 @@ def create_hvsmr_loaders(
     """
     train_ids = load_case_ids(train_split_file)
     val_ids = load_case_ids(val_split_file)
-    train_dicts = build_dataset_dicts(data_root, train_ids)
-    val_dicts = build_dataset_dicts(data_root, val_ids)
+    train_dicts = build_dataset_dicts(data_root, train_ids, label_root=label_root)
+    val_dicts = build_dataset_dicts(data_root, val_ids, label_root=label_root)
 
     train_transforms = Compose(
         [
