@@ -17,6 +17,7 @@ ENV/
 !logs/nnunet/*.metrics.json
 !logs/swin_unetr/
 !logs/swin_unetr/*.json
+pretrained/
 /checkpoints/
 
 # Large artifacts
