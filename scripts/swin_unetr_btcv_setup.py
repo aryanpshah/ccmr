@@ -144,6 +144,10 @@ def build_dataset_dicts(
     else:
         lbl_root = Path(data_root)
 
+    # Optional fallback roots if primary search fails
+    fallback_img_roots = [Path("data/processed/images"), Path("data/raw/HVSMR2/cropped_norm")]
+    fallback_lbl_roots = [Path("data/raw/HVSMR2/cropped_norm"), Path("data/processed/images")]
+
     dicts: List[Dict[str, str]] = []
     for cid in case_ids:
         img_candidates = [
@@ -164,8 +168,42 @@ def build_dataset_dicts(
         ]
         img_path = next((p for p in img_candidates if p.exists()), None)
         lbl_path = next((p for p in lbl_candidates if p.exists()), None)
+
+        # Fallback search if not found
+        if img_path is None:
+            for root in fallback_img_roots:
+                img_candidates_fb = [
+                    root / f"{cid}_img_proc.nii.gz",
+                    root / f"{cid}_img_proc.nii",
+                    root / f"{cid}_image.nii.gz",
+                    root / f"{cid}_image.nii",
+                    root / f"{cid}.nii.gz",
+                    root / f"{cid}.nii",
+                ]
+                img_path = next((p for p in img_candidates_fb if p.exists()), None)
+                if img_path is not None:
+                    break
+
+        if lbl_path is None:
+            for root in fallback_lbl_roots:
+                lbl_candidates_fb = [
+                    root / f"{cid}_label.nii.gz",
+                    root / f"{cid}_label.nii",
+                    root / f"{cid}_seg.nii.gz",
+                    root / f"{cid}_seg.nii",
+                    root / f"{cid}_cropped_seg.nii.gz",
+                    root / f"{cid}_cropped_seg.nii",
+                ]
+                lbl_path = next((p for p in lbl_candidates_fb if p.exists()), None)
+                if lbl_path is not None:
+                    break
+
         if img_path is None or lbl_path is None:
-            raise FileNotFoundError(f"Missing image/label for case {cid}: {img_candidates}, {lbl_candidates}")
+            raise FileNotFoundError(
+                f"Missing image/label for case {cid}. "
+                f"Checked primary roots {img_root},{lbl_root} and fallbacks; "
+                f"last tried img candidates {img_candidates} / lbl candidates {lbl_candidates}"
+            )
         dicts.append({"image": str(img_path), "label": str(lbl_path)})
     return dicts
 
