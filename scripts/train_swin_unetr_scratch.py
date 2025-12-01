@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--data_root", type=Path, default=Path("data/processed/hvsmr2"), help="Root dir containing imagesTr/ and labelsTr/")
     parser.add_argument("--train_split", type=Path, required=True, help="Path to train split txt (nnU-Net style).")
     parser.add_argument("--val_split", type=Path, required=True, help="Path to val split txt (nnU-Net style).")
-    parser.add_argument("--label_root", type=Path, default=Path("data/raw/HVSMR2/cropped_norm"), help="Root dir for labels if not under data_root.")
+    parser.add_argument("--label_root", type=Path, default=None, help="Root dir for labels if not under data_root (defaults to data_root/labelsTr).")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--lr", type=float, default=2e-4)
