@@ -85,6 +85,7 @@ def main():
     parser.add_argument("--data_root", type=Path, default=Path("data/processed/hvsmr2"), help="Root dir containing imagesTr/ and labelsTr/")
     parser.add_argument("--train_split", type=Path, required=True, help="Path to train split txt (nnU-Net style).")
     parser.add_argument("--val_split", type=Path, required=True, help="Path to val split txt (nnU-Net style).")
+    parser.add_argument("--label_root", type=Path, default=Path("data/raw/HVSMR2/cropped_norm"), help="Root dir for labels if not under data_root.")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--lr", type=float, default=2e-4)
@@ -105,6 +106,7 @@ def main():
         data_root=str(args.data_root),
         train_split_file=str(args.train_split),
         val_split_file=str(args.val_split),
+        label_root=str(args.label_root) if args.label_root else None,
         roi_size=tuple(args.roi_size),
         batch_size=args.batch_size,
         num_workers=args.num_workers,
