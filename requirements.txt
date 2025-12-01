@@ -5,12 +5,13 @@ scipy
 scikit-learn
 matplotlib
 nnunetv2
-torch>=2.1
+torch>=2.4.1
 scikit-image
 SimpleITK
 tqdm
 batchgenerators
 batchgeneratorsv2
 yacs
-monai[einops]
+monai[einops]>=1.5.1
+einops>=0.7
 tensorboard
