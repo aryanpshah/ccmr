@@ -1,11 +1,11 @@
-numpy
+numpy<1.27,>=1.26
 pandas
 nibabel
 scipy
 scikit-learn
 matplotlib
 nnunetv2
-torch>=2.4.1
+torch==2.4.1
 scikit-image
 SimpleITK
 tqdm

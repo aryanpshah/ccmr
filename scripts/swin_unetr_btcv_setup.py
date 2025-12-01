@@ -391,6 +391,7 @@ def create_model(device: torch.device, roi_size: Iterable[int]) -> SwinUNETR:
     Note: MONAI 1.5 SwinUNETR infers patch sizes from input spatial dims; ROI/volume
     size must remain consistent with preprocessing (e.g., 96^3 or padded to a multiple of 32).
     """
+    roi_size = tuple(int(v) for v in roi_size)
     model = SwinUNETR(
         in_channels=1,
         # 9 classes total: label 0 = background, labels 1-8 = structures
@@ -398,6 +399,7 @@ def create_model(device: torch.device, roi_size: Iterable[int]) -> SwinUNETR:
         feature_size=DEFAULT_FEATURE_SIZE,
         use_checkpoint=True,
         spatial_dims=3,
+        img_size=roi_size,
     )
     return model.to(device)
 
