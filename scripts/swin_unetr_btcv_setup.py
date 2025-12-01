@@ -101,17 +101,21 @@ def build_datalist(data_dir: Path) -> List[Dict[str, str]]:
     image_files = sorted(image_dir.glob("*.nii*"))
     datalist: List[Dict[str, str]] = []
     for img in image_files:
-        stem = img.name.split(".nii")[0]
+        resolved_img = _resolve_nifti_path(img)
+        if resolved_img is None:
+            print(f"[WARN] Could not resolve image file {img}; skipping.")
+            continue
+        stem = resolved_img.name.split(".nii")[0]
         candidates = [
-            label_dir / img.name,
+            label_dir / resolved_img.name,
             label_dir / f"{stem}.nii.gz",
             label_dir / f"{stem}.nii",
         ]
-        label_path = next((p for p in candidates if p.exists()), None)
+        label_path = _first_existing_nifti(candidates)
         if label_path is None:
             print(f"[WARN] Missing label for {img.name}; skipping.")
             continue
-        datalist.append({"image": str(img), "label": str(label_path)})
+        datalist.append({"image": str(resolved_img), "label": str(label_path)})
 
     if not datalist:
         raise RuntimeError("No image/label pairs were found.")
@@ -126,6 +130,34 @@ def load_case_ids(split_file: str) -> List[str]:
     with open(split_file, "r", encoding="utf-8") as f:
         case_ids = [line.strip() for line in f.readlines() if line.strip()]
     return case_ids
+
+
+def _resolve_nifti_path(path: Path | None) -> Path | None:
+    """
+    Return a real NIfTI file path, even if `path` is a directory wrapper (e.g., OneDrive placeholder).
+    """
+    if path is None:
+        return None
+    path = Path(path)
+    if path.is_file():
+        return path
+    if path.exists() and path.is_dir():
+        same_name = path / path.name  # OneDrive can expose files as folders with the same name
+        if same_name.is_file():
+            return same_name
+        inner = next((p for p in path.glob("*.nii*") if p.is_file()), None)
+        if inner is not None:
+            return inner
+    return None
+
+
+def _first_existing_nifti(candidates: Iterable[Path]) -> Path | None:
+    """Pick the first candidate that resolves to an on-disk NIfTI file."""
+    for cand in candidates:
+        resolved = _resolve_nifti_path(cand)
+        if resolved is not None:
+            return resolved
+    return None
 
 
 def build_dataset_dicts(
@@ -173,8 +205,8 @@ def build_dataset_dicts(
             lbl_root / f"{cid}_cropped_seg.nii.gz",
             lbl_root / f"{cid}_cropped_seg.nii",
         ]
-        img_path = next((p for p in img_candidates if p.exists()), None)
-        lbl_path = next((p for p in lbl_candidates if p.exists()), None)
+        img_path = _first_existing_nifti(img_candidates)
+        lbl_path = _first_existing_nifti(lbl_candidates)
 
         # Fallback search if not found
         if img_path is None:
@@ -187,7 +219,7 @@ def build_dataset_dicts(
                     root / f"{cid}.nii.gz",
                     root / f"{cid}.nii",
                 ]
-                img_path = next((p for p in img_candidates_fb if p.exists()), None)
+                img_path = _first_existing_nifti(img_candidates_fb)
                 if img_path is not None:
                     break
 
@@ -201,7 +233,7 @@ def build_dataset_dicts(
                     root / f"{cid}_cropped_seg.nii.gz",
                     root / f"{cid}_cropped_seg.nii",
                 ]
-                lbl_path = next((p for p in lbl_candidates_fb if p.exists()), None)
+                lbl_path = _first_existing_nifti(lbl_candidates_fb)
                 if lbl_path is not None:
                     break
 
