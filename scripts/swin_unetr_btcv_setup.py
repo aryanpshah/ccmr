@@ -36,6 +36,8 @@ from monai.transforms import (
     ScaleIntensityRanged,
     NormalizeIntensityd,
     Spacingd,
+    ResizeWithPadOrCropd,
+    SpatialPadd,
 )
 from monai.utils import set_determinism
 from monai.data import CacheDataset
@@ -55,8 +57,8 @@ except ImportError:
 # BTCV bundle specifics (adapted here to 8 foreground structures + background)
 NUM_CLASSES = 9  # 9 classes total: label 0 = background, labels 1-8 = structures
 DEFAULT_FEATURE_SIZE = 48
-DEFAULT_SPACING = (1.5, 1.5, 2.0)  # TODO: adjust to your dataset spacing if needed
-DEFAULT_ROI_SIZE = (96, 96, 96)  # TODO: tune for GPU memory and accuracy
+DEFAULT_SPACING = (1.0, 1.0, 1.0)  # HVSMR resampled spacing used in loaders
+DEFAULT_ROI_SIZE = (96, 96, 96)  # Default patch size; raise/lower depending on GPU memory
 DEFAULT_PRETRAINED_URL = (
     # Public NGC bundle; may require `NGC_CLI_API_KEY` for authenticated download.
     "https://api.ngc.nvidia.com/v2/org/nvidia/teams/monaitoolkit/models/"
@@ -274,6 +276,7 @@ def create_hvsmr_loaders(
             Orientationd(keys=["image", "label"], axcodes="RAS"),
             # MRI intensity normalization: z-score on non-zero voxels, channel-wise.
             NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
+            SpatialPadd(keys=["image", "label"], spatial_size=roi_size, mode=("reflect", "constant")),
             RandSpatialCropd(keys=["image", "label"], roi_size=roi_size, random_size=False),
             RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
             RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
@@ -281,6 +284,7 @@ def create_hvsmr_loaders(
             RandRotate90d(keys=["image", "label"], prob=0.5, max_k=3),
             RandScaleIntensityd(keys=["image"], factors=0.1, prob=0.5),
             RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
+            ResizeWithPadOrCropd(keys=["image", "label"], spatial_size=roi_size),
             EnsureTyped(keys=["image", "label"]),
         ]
     )
@@ -293,6 +297,8 @@ def create_hvsmr_loaders(
             Orientationd(keys=["image", "label"], axcodes="RAS"),
             # MRI intensity normalization: z-score on non-zero voxels, channel-wise.
             NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
+            SpatialPadd(keys=["image", "label"], spatial_size=roi_size, mode=("reflect", "constant")),
+            ResizeWithPadOrCropd(keys=["image", "label"], spatial_size=roi_size),
             EnsureTyped(keys=["image", "label"]),
         ]
     )
@@ -306,7 +312,10 @@ def create_hvsmr_loaders(
     # Debug info
     print(f"Loaded {len(train_ds)} training cases and {len(val_ds)} validation cases.")
     first_batch = next(iter(train_loader))
-    print(f"First train batch shapes -> image: {tuple(first_batch['image'].shape)}, label: {tuple(first_batch['label'].shape)}; roi_size={roi_size}")
+    img, lab = first_batch["image"], first_batch["label"]
+    print(f"First train batch shapes -> image: {tuple(img.shape)}, label: {tuple(lab.shape)}; roi_size={roi_size}")
+    print(f"Debug shapes after transforms: img={tuple(img.shape)}, lab={tuple(lab.shape)}")
+    assert img.shape[2:] == lab.shape[2:], "Image and label spatial shapes must match"
 
     return train_loader, val_loader
 
