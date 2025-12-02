@@ -29,20 +29,7 @@ from swin_unetr_btcv_setup import (  # noqa: E402
     log_and_validate_batch_shape,
     set_seed,
 )
-
-
-def load_pretrained(model: torch.nn.Module, checkpoint: Path) -> None:
-    """Load BTCV Swin-UNETR weights for fine-tuning."""
-    ckpt = torch.load(checkpoint, map_location="cpu")
-    state = ckpt["state_dict"] if "state_dict" in ckpt else ckpt
-    state = {k.replace("module.", "", 1): v for k, v in state.items()}
-    model_state = model.state_dict()
-    filtered_state = {k: v for k, v in state.items() if k in model_state and v.shape == model_state[k].shape}
-    dropped = sorted(set(state.keys()) - set(filtered_state.keys()))
-    if dropped:
-        print(f"Dropping mismatched keys (e.g., head): {dropped}")
-    result = model.load_state_dict(filtered_state, strict=False)
-    print(f"Loaded BTCV Swin-UNETR weights for fine-tuning. Missing: {result.missing_keys}, Unexpected: {result.unexpected_keys}")
+from training_utils import compute_metrics, load_checkpoint, save_checkpoint  # noqa: E402
 
 
 def train_epoch(
@@ -73,7 +60,7 @@ def validate_epoch(
     loader: torch.utils.data.DataLoader,
     device: torch.device,
     roi_size: Iterable[int],
-) -> Tuple[float, np.ndarray]:
+) -> Tuple[float, np.ndarray, float]:
     model.eval()
     post_pred = AsDiscrete(argmax=True, to_onehot=NUM_CLASSES)
     post_label = AsDiscrete(to_onehot=NUM_CLASSES)
@@ -88,12 +75,7 @@ def validate_epoch(
             labels_list = [post_label(i) for i in decollate_batch(labels)]
             dice_metric(y_pred=preds, y=labels_list)
 
-    dice = dice_metric.aggregate()  # shape [N, C] or flattened
-    dice_np = dice.cpu().numpy()
-    mean_dice_all = float(np.nanmean(dice_np))
-    mean_dice_per_class = np.nanmean(dice_np.reshape(-1, NUM_CLASSES), axis=0).tolist()
-    mean_fg_dice = float(np.nanmean(mean_dice_per_class[1:]))
-    dice_metric.reset()
+    mean_dice_all, mean_dice_per_class, mean_fg_dice = compute_metrics(dice_metric, NUM_CLASSES)
     return mean_dice_all, mean_dice_per_class, mean_fg_dice
 
 
@@ -134,7 +116,8 @@ def main():
     print(f"Summary: train cases={len(train_loader.dataset)}, val cases={len(val_loader.dataset)}, roi_size={roi_size}, batch_size={args.batch_size}")
 
     model = create_model(device=device, roi_size=roi_size)
-    load_pretrained(model, args.pretrained_ckpt)
+    missing, unexpected = load_checkpoint(model, args.pretrained_ckpt, filter_mismatch=True)
+    print(f"Loaded BTCV Swin-UNETR weights. Missing: {missing}, Unexpected: {unexpected}")
 
     loss_function = DiceCELoss(to_onehot_y=True, softmax=True, include_background=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -156,10 +139,10 @@ def main():
         print(f"  Val mean Dice (fg): {val_mean_fg:.4f}")
         print(f"  Per-class mean Dice: [{per_class_str}]")
 
-        torch.save(model.state_dict(), last_path)
+        save_checkpoint(model, last_path)
         if val_mean_all > best_dice:
             best_dice = val_mean_all
-            torch.save(model.state_dict(), best_path)
+            save_checkpoint(model, best_path)
             print(f"  New best model saved to {best_path} (Dice={best_dice:.4f})")
 
 
