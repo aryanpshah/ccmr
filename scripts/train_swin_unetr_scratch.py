@@ -29,6 +29,7 @@ from swin_unetr_btcv_setup import (  # noqa: E402
     log_and_validate_batch_shape,
     set_seed,
 )
+from training_utils import compute_metrics, save_checkpoint  # noqa: E402
 
 
 def train_epoch(
@@ -59,7 +60,7 @@ def validate_epoch(
     loader: torch.utils.data.DataLoader,
     device: torch.device,
     roi_size: Iterable[int],
-) -> Tuple[float, np.ndarray]:
+) -> Tuple[float, np.ndarray, float]:
     model.eval()
     post_pred = AsDiscrete(argmax=True, to_onehot=NUM_CLASSES)
     post_label = AsDiscrete(to_onehot=NUM_CLASSES)
@@ -74,12 +75,7 @@ def validate_epoch(
             labels_list = [post_label(i) for i in decollate_batch(labels)]
             dice_metric(y_pred=preds, y=labels_list)
 
-    dice = dice_metric.aggregate()  # shape [N, C] or flattened
-    dice_np = dice.cpu().numpy()
-    mean_dice_all = float(np.nanmean(dice_np))
-    mean_dice_per_class = np.nanmean(dice_np.reshape(-1, NUM_CLASSES), axis=0).tolist()
-    mean_fg_dice = float(np.nanmean(mean_dice_per_class[1:]))
-    dice_metric.reset()
+    mean_dice_all, mean_dice_per_class, mean_fg_dice = compute_metrics(dice_metric, NUM_CLASSES)
     return mean_dice_all, mean_dice_per_class, mean_fg_dice
 
 
@@ -140,10 +136,10 @@ def main():
         print(f"  Val mean Dice (fg): {val_mean_fg:.4f}")
         print(f"  Per-class mean Dice: [{per_class_str}]")
 
-        torch.save(model.state_dict(), last_path)
+        save_checkpoint(model, last_path)
         if val_mean_all > best_dice:
             best_dice = val_mean_all
-            torch.save(model.state_dict(), best_path)
+            save_checkpoint(model, best_path)
             print(f"  New best model saved to {best_path} (Dice={best_dice:.4f})")
 
 
