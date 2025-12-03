@@ -85,14 +85,17 @@ def main():
     parser.add_argument("--train_split", type=Path, required=True, help="Path to train split txt (nnU-Net style).")
     parser.add_argument("--val_split", type=Path, required=True, help="Path to val split txt (nnU-Net style).")
     parser.add_argument("--label_root", type=Path, default=None, help="Root dir for labels if not under data_root (defaults to data_root/labelsTr).")
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", "--lr_max", dest="lr_max", type=float, default=6e-5, help="Initial / max learning rate.")
+    parser.add_argument("--lr_min", type=float, default=6e-6, help="Final learning rate at the end of training.")
+    parser.add_argument("--weight_decay", type=float, default=3e-3)
     parser.add_argument("--output_dir", type=Path, required=True, help="Directory for checkpoints/logs.")
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--roi_size", type=int, nargs=3, default=DEFAULT_ROI_SIZE, metavar=("X", "Y", "Z"))
+    parser.add_argument("--roi_size", type=int, nargs=3, default=(128, 128, 128), metavar=("X", "Y", "Z"))
     parser.add_argument("--pretrained_ckpt", type=Path, required=True, help="Path to BTCV Swin-UNETR checkpoint (.pt/.pth).")
+    parser.add_argument("--patience", type=int, default=60, help="Early stopping patience (validation epochs).")
     args = parser.parse_args()
 
     print("Fine-tuning Swin-UNETR from BTCV pre-trained weights for 9-class segmentation.")
@@ -100,6 +103,7 @@ def main():
     set_determinism(seed=args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    roi_size = tuple(args.roi_size)
 
     # The train/val splits are read from the same txt files used by nnU-Net, so Swin-UNETR sees the same images as nnU-Net for a fair comparison.
     train_loader, val_loader = create_hvsmr_loaders(
@@ -107,11 +111,10 @@ def main():
         train_split_file=str(args.train_split),
         val_split_file=str(args.val_split),
         label_root=str(args.label_root) if args.label_root else None,
-        roi_size=tuple(args.roi_size),
+        roi_size=roi_size,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
     )
-    roi_size = tuple(args.roi_size)
     log_and_validate_batch_shape(train_loader, roi_size)
     print(f"Summary: train cases={len(train_loader.dataset)}, val cases={len(val_loader.dataset)}, roi_size={roi_size}, batch_size={args.batch_size}")
 
@@ -120,17 +123,24 @@ def main():
     print(f"Loaded BTCV Swin-UNETR weights. Missing: {missing}, Unexpected: {unexpected}")
 
     loss_function = DiceCELoss(to_onehot_y=True, softmax=True, include_background=True)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, args.epochs))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr_max, weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(1, args.epochs), eta_min=args.lr_min
+    )
+    print(
+        f"Mode: full fine tune | Optimizer: AdamW | lr range: {args.lr_max:.3e} -> {args.lr_min:.3e} | "
+        f"weight_decay: {args.weight_decay:.3e} | batch_size: {args.batch_size} | "
+        f"roi_size: {roi_size} | max_epochs: {args.epochs} | early_stopping_patience: {args.patience}"
+    )
 
     best_dice = -1.0
+    epochs_no_improve = 0
     best_path = args.output_dir / "best_model.pt"
     last_path = args.output_dir / "last_model.pt"
 
     for epoch in range(args.epochs):
         print(f"Epoch {epoch + 1}/{args.epochs}")
         train_loss = train_epoch(model, train_loader, device, loss_function, optimizer)
-        scheduler.step()
         print(f"  Mean train loss: {train_loss:.4f}")
 
         val_mean_all, val_per_class_mean, val_mean_fg = validate_epoch(model, val_loader, device, roi_size)
@@ -138,12 +148,19 @@ def main():
         print(f"  Val mean Dice (all): {val_mean_all:.4f}")
         print(f"  Val mean Dice (fg): {val_mean_fg:.4f}")
         print(f"  Per-class mean Dice: [{per_class_str}]")
+        scheduler.step()
 
         save_checkpoint(model, last_path)
         if val_mean_all > best_dice:
             best_dice = val_mean_all
+            epochs_no_improve = 0
             save_checkpoint(model, best_path)
             print(f"  New best model saved to {best_path} (Dice={best_dice:.4f})")
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= args.patience:
+                print(f"  Early stopping triggered (no improvement for {args.patience} epochs).")
+                break
 
 
 if __name__ == "__main__":
