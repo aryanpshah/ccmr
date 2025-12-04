@@ -19,14 +19,29 @@ ENV/
 /logs/*
 !logs/nnunet/
 !logs/nnunet/*.metrics.json
-!logs/swin_unetr/
+logs/swin_unetr/
 !logs/swin_unetr/*.json
 pretrained/
 /checkpoints/
 
 # Large artifacts
-*.npz
+# *.npz
 
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local NVIDIA NGC CLI binaries
+ngc-cli/
+ngccli_linux.zip
+ngc-cli.md5
+setup_history_raw.txt
+
+# Logs
+# logs/
+
+# Large pretrained model bundles and weights (installed via scripts)
+# pretrained/
+
+# Local setup history (optional; remove if you want this tracked)
+# setup_history_raw.txt
