@@ -191,7 +191,7 @@ def main():
 
     # Quick sanity check
     with torch.no_grad():
-        dummy = torch.randn(1, 1, 32, 32, 32, device=device)
+        dummy = torch.randn((1, 1, *roi_size), device=device)
         _ = model(dummy)
 
     loss_function = DiceCELoss(to_onehot_y=True, softmax=True, include_background=True)
