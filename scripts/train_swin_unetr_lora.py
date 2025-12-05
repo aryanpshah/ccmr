@@ -6,7 +6,7 @@ Defaults freeze the backbone so only LoRA params (and any unfrozen heads) train.
 import argparse
 import sys
 from pathlib import Path
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
 import numpy as np
 import torch
@@ -45,21 +45,48 @@ def train_epoch(
     device: torch.device,
     loss_function: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
+    epoch: int,
+    max_train_batches: Optional[int] = None,
 ) -> float:
     model.train()
     epoch_loss = 0.0
-    for step, batch in enumerate(loader, start=1):
+    steps_processed = 0
+    for step, batch in enumerate(loader):
+        if max_train_batches is not None and step >= max_train_batches:
+            break
         images = batch["image"].to(device)
         labels = batch["label"].to(device)
         optimizer.zero_grad(set_to_none=True)
         logits = model(images)
         loss = loss_function(logits, labels)
         loss.backward()
+        if epoch == 0 and step == 0:
+            lora_grad_norm = 0.0
+            decoder_head_grad_norm = 0.0
+            frozen_grad_norm = 0.0
+            for name, param in model.named_parameters():
+                if param.grad is None:
+                    continue
+                grad_norm = param.grad.norm().item()
+                name_l = name.lower()
+                if "lora" in name_l:
+                    lora_grad_norm += grad_norm
+                elif any(tag in name_l for tag in ("decoder", "up", "seg_head", "out")):
+                    decoder_head_grad_norm += grad_norm
+                else:
+                    frozen_grad_norm += grad_norm
+            print(
+                f"[DEBUG GRADS] lora_grad_norm={lora_grad_norm:.4e}, decoder_head_grad_norm={decoder_head_grad_norm:.4e}, frozen_grad_norm={frozen_grad_norm:.4e}"
+            )
+            if frozen_grad_norm > 1e-8:
+                print("  [WARN] Frozen parameters show non-zero gradients; confirm freeze settings.")
         optimizer.step()
         epoch_loss += loss.item()
-        if step == 1 or step % 5 == 0:
-            print(f"  train step {step:03d} - loss: {loss.item():.4f}")
-    return epoch_loss / max(1, len(loader))
+        steps_processed += 1
+        step_display = step + 1
+        if step_display == 1 or step_display % 5 == 0:
+            print(f"  train step {step_display:03d} - loss: {loss.item():.4f}")
+    return epoch_loss / max(1, steps_processed)
 
 
 def validate_epoch(
@@ -107,6 +134,12 @@ def main():
     parser.add_argument("--lora_alpha", type=float, default=1.0)
     parser.add_argument("--freeze_backbone", dest="freeze_backbone", action="store_true", default=True)
     parser.add_argument("--no_freeze_backbone", dest="freeze_backbone", action="store_false", help="Train full backbone along with LoRA.")
+    parser.add_argument(
+        "--max_train_batches",
+        type=int,
+        default=None,
+        help="If set, limit the number of training batches per epoch (debug only).",
+    )
     args = parser.parse_args()
 
     print("Training Swin-UNETR with LoRA adapters (Q/V).")
@@ -187,7 +220,15 @@ def main():
 
     for epoch in range(args.epochs):
         print(f"Epoch {epoch + 1}/{args.epochs}")
-        train_loss = train_epoch(model, train_loader, device, loss_function, optimizer)
+        train_loss = train_epoch(
+            model,
+            train_loader,
+            device,
+            loss_function,
+            optimizer,
+            epoch,
+            max_train_batches=args.max_train_batches,
+        )
         print(f"  Mean train loss: {train_loss:.4f}")
 
         val_mean_all, val_per_class_mean, val_mean_fg = validate_epoch(model, val_loader, device, roi_size)

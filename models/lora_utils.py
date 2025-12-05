@@ -116,7 +116,11 @@ def _wrap_window_attention_with_lora(attn: WindowAttention, lora_rank: int, lora
         if attn.v_lora is not None:
             attn.v_lora.to(device=target_device, dtype=target_dtype)
 
-    def forward_lora(x: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:  # type: ignore[override]
+    orig_forward = attn.forward
+
+    def forward_lora(self, x: torch.Tensor, mask: torch.Tensor | None = None, *args, **kwargs) -> torch.Tensor:  # type: ignore[override]
+        if not attn.use_lora:
+            return orig_forward(x, mask=mask, *args, **kwargs)
         b, n, c = x.shape
         qkv = attn.qkv(x)
         if attn.use_lora and attn.q_lora is not None and attn.v_lora is not None:
