@@ -64,22 +64,28 @@ def train_epoch(
             lora_grad_norm = 0.0
             decoder_head_grad_norm = 0.0
             frozen_grad_norm = 0.0
+            frozen_with_grads: list[str] = []
             for name, param in model.named_parameters():
-                if param.grad is None:
+                grad = param.grad
+                if grad is None:
                     continue
-                grad_norm = param.grad.norm().item()
-                name_l = name.lower()
-                if "lora" in name_l:
+                grad_norm = grad.norm().item()
+                name_lower = name.lower()
+                if "lora" in name_lower and param.requires_grad:
                     lora_grad_norm += grad_norm
-                elif any(tag in name_l for tag in ("decoder", "up", "seg_head", "out")):
+                elif not name.startswith("swinViT") and "lora" not in name_lower:
                     decoder_head_grad_norm += grad_norm
-                else:
+                elif name.startswith("swinViT") and not param.requires_grad:
                     frozen_grad_norm += grad_norm
+                    frozen_with_grads.append(name)
             print(
                 f"[DEBUG GRADS] lora_grad_norm={lora_grad_norm:.4e}, decoder_head_grad_norm={decoder_head_grad_norm:.4e}, frozen_grad_norm={frozen_grad_norm:.4e}"
             )
             if frozen_grad_norm > 1e-8:
-                print("  [WARN] Frozen parameters show non-zero gradients; confirm freeze settings.")
+                print(f"  [WARN] Frozen parameters show non-zero gradients; clearing: {frozen_with_grads}")
+                for name, param in model.named_parameters():
+                    if name in frozen_with_grads:
+                        param.grad = None
         optimizer.step()
         epoch_loss += loss.item()
         steps_processed += 1
@@ -211,11 +217,8 @@ def main():
         _ = model(dummy)
 
     loss_function = DiceCELoss(to_onehot_y=True, softmax=True, include_background=True)
-    lora_params_for_optim = get_lora_params(model)
-    if not lora_params_for_optim:
-        # Fallback: if nothing is marked as LoRA (e.g., lora_rank=0), optimize all trainable params.
-        lora_params_for_optim = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(lora_params_for_optim, lr=args.lr_max, weight_decay=args.weight_decay)
+    trainable_params_for_optim = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params_for_optim, lr=args.lr_max, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=max(1, args.epochs), eta_min=args.lr_min
     )
