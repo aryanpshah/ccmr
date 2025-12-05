@@ -178,6 +178,22 @@ def main():
         # lora_rank == 0: train as usual
         args.freeze_backbone = False
 
+    if args.freeze_backbone:
+        frozen_params = 0
+        trainable_params = 0
+        for name, param in model.named_parameters():
+            name_lower = name.lower()
+            if "lora" in name_lower:
+                param.requires_grad = True
+                trainable_params += param.numel()
+            elif name.startswith("swinViT"):
+                param.requires_grad = False
+                frozen_params += param.numel()
+            else:
+                param.requires_grad = True
+                trainable_params += param.numel()
+        print(f"Backbone frozen params: {frozen_params} | Trainable (LoRA + decoder + head): {trainable_params}")
+
     total_params, trainable_params = count_parameters(model)
     lora_params = get_lora_params(model)
     lora_param_count = sum(p.numel() for p in lora_params)
