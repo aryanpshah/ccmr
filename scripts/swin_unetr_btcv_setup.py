@@ -283,7 +283,7 @@ def create_hvsmr_loaders(
                 spatial_size=roi_size,
                 pos=1,
                 neg=1,
-                num_samples=4,
+                num_samples=2,  # keep effective batch small to reduce GPU memory
             ),
             ResizeWithPadOrCropd(keys=["image", "label"], spatial_size=roi_size),
             RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
