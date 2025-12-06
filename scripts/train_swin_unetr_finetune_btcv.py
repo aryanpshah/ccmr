@@ -38,12 +38,18 @@ def train_epoch(
     device: torch.device,
     loss_function: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
+    epoch_idx: int,
+    debug_label_hist_steps: int = 3,
 ) -> float:
     model.train()
     epoch_loss = 0.0
     for step, batch in enumerate(loader, start=1):
         images = batch["image"].to(device)
         labels = batch["label"].to(device)
+        if epoch_idx == 0 and step <= debug_label_hist_steps:
+            with torch.no_grad():
+                label_hist = torch.bincount(labels.long().flatten(), minlength=NUM_CLASSES).cpu().numpy().tolist()
+            print(f"  [DEBUG] label histogram (step {step:02d}): {label_hist}")
         optimizer.zero_grad(set_to_none=True)
         logits = model(images)
         loss = loss_function(logits, labels)
@@ -122,7 +128,19 @@ def main():
     missing, unexpected = load_checkpoint(model, args.pretrained_ckpt, filter_mismatch=True)
     print(f"Loaded BTCV Swin-UNETR weights. Missing: {missing}, Unexpected: {unexpected}")
 
-    loss_function = DiceCELoss(to_onehot_y=True, softmax=True, include_background=True)
+    # Full fine-tune: ensure every parameter remains trainable (no backbone freezing, no LoRA-only params here).
+    for param in model.parameters():
+        param.requires_grad = True
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    frozen_samples = [name for name, p in model.named_parameters() if not p.requires_grad][:10]
+    print(f"Parameter counts -> total: {total_params:,} | trainable: {trainable_params:,}")
+    if frozen_samples:
+        print(f"  [WARN] Found frozen params (should be none in full fine-tune): {frozen_samples}")
+
+    # Optionally set per-class CE weights to up-weight rare structures (e.g., labels 4-8) vs. background/labels 1-3.
+    class_weights = None  # torch.tensor([0.25, 0.5, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0, 1.0], device=device)
+    loss_function = DiceCELoss(to_onehot_y=True, softmax=True, include_background=True, ce_weight=class_weights)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr_max, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=max(1, args.epochs), eta_min=args.lr_min
@@ -140,7 +158,14 @@ def main():
 
     for epoch in range(args.epochs):
         print(f"Epoch {epoch + 1}/{args.epochs}")
-        train_loss = train_epoch(model, train_loader, device, loss_function, optimizer)
+        train_loss = train_epoch(
+            model,
+            train_loader,
+            device,
+            loss_function,
+            optimizer,
+            epoch_idx=epoch,
+        )
         print(f"  Mean train loss: {train_loss:.4f}")
 
         val_mean_all, val_per_class_mean, val_mean_fg = validate_epoch(model, val_loader, device, roi_size)
@@ -161,6 +186,9 @@ def main():
             if epochs_no_improve >= args.patience:
                 print(f"  Early stopping triggered (no improvement for {args.patience} epochs).")
                 break
+
+    final_epoch = epoch + 1
+    print(f"Training completed at epoch {final_epoch}. Best val mean Dice: {best_dice:.4f}.")
 
 
 if __name__ == "__main__":
