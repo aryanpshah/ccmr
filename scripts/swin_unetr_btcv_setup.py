@@ -284,6 +284,12 @@ def create_hvsmr_loaders(
             RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
         ]
     )
+    # Keep requested crop balance; for large ROIs (e.g., 128^3) L5 can OOM with 8 crops,
+    # so shrink num_samples when L5 + big ROI is detected.
+    reduce_samples_for_l5 = is_l5_split and max(roi_size) >= 128
+    rand_crop_samples = 4 if reduce_samples_for_l5 else 8
+    if reduce_samples_for_l5:
+        print(f"L5 + ROI {roi_size} detected -> reducing RandCropByPosNegLabeld num_samples to {rand_crop_samples} to save memory.")
 
     train_transforms = Compose(
         [
@@ -300,7 +306,7 @@ def create_hvsmr_loaders(
                 spatial_size=roi_size,
                 pos=3,
                 neg=1,
-                num_samples=8,
+                num_samples=rand_crop_samples,
             ),
             ResizeWithPadOrCropd(keys=spatial_keys, spatial_size=roi_size),
             RandFlipd(keys=spatial_keys, prob=0.5, spatial_axis=0),
