@@ -89,7 +89,6 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, r
         reduction="none",
         get_not_nans=False,
         num_classes=NUM_CLASSES,
-        softmax=False,
     )
     hd_metric = HausdorffDistanceMetric(
         include_background=True,
