@@ -111,8 +111,18 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, r
             preds = torch.argmax(logits, dim=1, keepdim=True)
             preds = [to_onehot(p) for p in decollate_batch(preds)]
             labels_oh = [to_onehot(l) for l in decollate_batch(labels)]
-            dice_metric(y_pred=preds, y=labels_oh)
-            hd_metric(y_pred=preds, y=labels_oh)
+
+            # Ensure labels match prediction spatial size (some labels are smaller after spacing).
+            aligned_labels = []
+            for p, l in zip(preds, labels_oh):
+                if p.shape != l.shape:
+                    l = torch.nn.functional.interpolate(
+                        l.unsqueeze(0).float(), size=p.shape[1:], mode="nearest"
+                    ).squeeze(0)
+                aligned_labels.append(l)
+
+            dice_metric(y_pred=preds, y=aligned_labels)
+            hd_metric(y_pred=preds, y=aligned_labels)
 
     dice_per_class = dice_metric.aggregate().cpu().numpy()
     hd_per_class = hd_metric.aggregate().cpu().numpy()
