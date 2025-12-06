@@ -138,9 +138,14 @@ def main():
     if frozen_samples:
         print(f"  [WARN] Found frozen params (should be none in full fine-tune): {frozen_samples}")
 
-    # Optionally set per-class CE weights to up-weight rare structures (e.g., labels 4-8) vs. background/labels 1-3.
-    class_weights = None  # torch.tensor([0.25, 0.5, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0, 1.0], device=device)
-    loss_function = DiceCELoss(to_onehot_y=True, softmax=True, include_background=True, ce_weight=class_weights)
+    class_weights = torch.tensor([0.05, 1, 1, 1.5, 2, 2.5, 3, 3, 3], device=device)
+    print(f"Class weights (DiceCELoss CE component): {class_weights.tolist()}")
+    loss_function = DiceCELoss(
+        to_onehot_y=True,
+        softmax=True,
+        include_background=True,
+        ce_weight=class_weights,
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr_max, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=max(1, args.epochs), eta_min=args.lr_min
