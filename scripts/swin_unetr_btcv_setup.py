@@ -284,6 +284,7 @@ def create_hvsmr_loaders(
                 pos=1,
                 neg=1,
                 num_samples=4,
+                random_size=False,
             ),
             RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=0),
             RandFlipd(keys=["image", "label"], prob=0.5, spatial_axis=1),
