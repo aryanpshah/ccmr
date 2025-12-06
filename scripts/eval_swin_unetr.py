@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.inferers import sliding_window_inference
-from monai.metrics import DiceMetric
+from monai.metrics import DiceMetric, HausdorffDistanceMetric
 from monai.transforms import (
     AsDiscrete,
     Compose,
@@ -91,6 +91,12 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, r
         num_classes=NUM_CLASSES,
         softmax=False,
     )
+    hd_metric = HausdorffDistanceMetric(
+        include_background=True,
+        reduction="none",
+        percentile=95,
+        get_not_nans=False,
+    )
     to_onehot = AsDiscrete(to_onehot=NUM_CLASSES)
     with torch.no_grad():
         for batch in loader:
@@ -107,12 +113,17 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, r
             preds = [to_onehot(p) for p in decollate_batch(preds)]
             labels_oh = [to_onehot(l) for l in decollate_batch(labels)]
             dice_metric(y_pred=preds, y=labels_oh)
+            hd_metric(y_pred=preds, y=labels_oh)
 
     dice_per_class = dice_metric.aggregate().cpu().numpy()
+    hd_per_class = hd_metric.aggregate().cpu().numpy()
     dice_metric.reset()
+    hd_metric.reset()
     mean_all = float(dice_per_class.mean())
     mean_fg = float(dice_per_class[1:].mean()) if dice_per_class.shape[0] > 1 else float("nan")
-    return dice_per_class, mean_all, mean_fg
+    mean_hd_all = float(np.nanmean(hd_per_class))
+    mean_hd_fg = float(np.nanmean(hd_per_class[1:])) if hd_per_class.shape[0] > 1 else float("nan")
+    return dice_per_class, mean_all, mean_fg, hd_per_class, mean_hd_all, mean_hd_fg
 
 
 def main():
@@ -134,10 +145,15 @@ def main():
 
     model = load_model(args.checkpoint, device=device, roi_size=roi_size)
 
-    dice_per_class, mean_all, mean_fg = evaluate(model, test_loader, device, roi_size)
+    dice_per_class, mean_all, mean_fg, hd_per_class, hd_mean_all, hd_mean_fg = evaluate(
+        model, test_loader, device, roi_size
+    )
     print(f"Mean Dice (all classes): {mean_all:.4f}")
     print(f"Mean Dice (foreground only): {mean_fg:.4f}")
     print(f"Per-class Dice: {dice_per_class}")
+    print(f"Mean HD95 (all classes): {hd_mean_all:.4f}")
+    print(f"Mean HD95 (foreground only): {hd_mean_fg:.4f}")
+    print(f"Per-class HD95: {hd_per_class}")
 
     metrics = {
         "num_classes": NUM_CLASSES,
@@ -145,6 +161,9 @@ def main():
         "dice_per_class": dice_per_class.tolist(),
         "mean_dice_all_classes": mean_all,
         "mean_dice_foreground": mean_fg,
+        "hausdorff95_per_class": hd_per_class.tolist(),
+        "mean_hausdorff95_all_classes": hd_mean_all,
+        "mean_hausdorff95_foreground": hd_mean_fg,
         "num_test_cases": len(test_loader.dataset),
         "checkpoint": str(args.checkpoint),
         "test_split": str(args.test_split),
