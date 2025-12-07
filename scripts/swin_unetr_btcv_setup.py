@@ -506,9 +506,13 @@ def validate(
             images = batch_data["image"].to(device)
             labels = batch_data["label"].to(device)
             logits = sliding_window_inference(images, roi_size=roi_size, sw_batch_size=1, predictor=model)
+
+            # Compute Dice per batch and immediately drop tensors so validation does not cache volumes.
             preds = [post_pred(i) for i in decollate_batch(logits)]
             labels_list = [post_label(i) for i in decollate_batch(labels)]
             dice_metric(y_pred=preds, y=labels_list)
+
+            del preds, labels_list, logits, images, labels
 
     dice = float(dice_metric.aggregate().item())
     dice_metric.reset()
@@ -530,7 +534,7 @@ def train(
         softmax=True,
         include_background=True,
     )
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs))
 
     for epoch in range(epochs):
@@ -545,9 +549,14 @@ def train(
             loss = loss_function(logits, labels)
             loss.backward()
             optimizer.step()
-            epoch_loss += loss.item()
+
+            # Record scalar first, then release tensors to prevent lingering activations between steps.
+            loss_value = loss.item()
+            epoch_loss += loss_value
             if step % 5 == 0 or step == 1:
-                print(f"  step {step:03d} - loss: {loss.item():.4f}")
+                print(f"  step {step:03d} - loss: {loss_value:.4f}")
+
+            del loss, logits, images, labels
 
         scheduler.step()
         avg_loss = epoch_loss / max(1, len(train_loader))
