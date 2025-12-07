@@ -534,7 +534,7 @@ def train(
         softmax=True,
         include_background=True,
     )
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, epochs))
 
     for epoch in range(epochs):
