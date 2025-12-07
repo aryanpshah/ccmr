@@ -55,9 +55,15 @@ def train_epoch(
         loss = loss_function(logits, labels)
         loss.backward()
         optimizer.step()
-        epoch_loss += loss.item()
+
+        # Grab scalar values early and then drop tensor references to avoid keeping graphs/activations.
+        loss_value = loss.item()
+        epoch_loss += loss_value
         if step == 1 or step % 5 == 0:
-            print(f"  train step {step:03d} - loss: {loss.item():.4f}")
+            print(f"  train step {step:03d} - loss: {loss_value:.4f}")
+
+        # Explicitly free large tensors so nothing lingers past this iteration.
+        del loss, logits, images, labels
     return epoch_loss / max(1, len(loader))
 
 
@@ -77,9 +83,13 @@ def validate_epoch(
             images = batch["image"].to(device)
             labels = batch["label"].to(device)
             logits = sliding_window_inference(images, roi_size=roi_size, sw_batch_size=1, predictor=model)
+
+            # Compute Dice per batch and immediately release predictions/labels to avoid retaining full volumes.
             preds = [post_pred(i) for i in decollate_batch(logits)]
             labels_list = [post_label(i) for i in decollate_batch(labels)]
             dice_metric(y_pred=preds, y=labels_list)
+
+            del preds, labels_list, logits, images, labels
 
     mean_dice_all, mean_dice_per_class, mean_fg_dice = compute_metrics(dice_metric, NUM_CLASSES)
     return mean_dice_all, mean_dice_per_class, mean_fg_dice

@@ -87,11 +87,17 @@ def train_epoch(
                     if name in frozen_with_grads:
                         param.grad = None
         optimizer.step()
-        epoch_loss += loss.item()
+
+        # Cache scalar before freeing tensors to avoid keeping computation graphs/activations.
+        loss_value = loss.item()
+        epoch_loss += loss_value
         steps_processed += 1
         step_display = step + 1
         if step_display == 1 or step_display % 5 == 0:
-            print(f"  train step {step_display:03d} - loss: {loss.item():.4f}")
+            print(f"  train step {step_display:03d} - loss: {loss_value:.4f}")
+
+        # Drop references so per-step allocations can be released promptly.
+        del loss, logits, images, labels
     return epoch_loss / max(1, steps_processed)
 
 
@@ -111,9 +117,13 @@ def validate_epoch(
             images = batch["image"].to(device)
             labels = batch["label"].to(device)
             logits = sliding_window_inference(images, roi_size=roi_size, sw_batch_size=1, predictor=model)
+
+            # Compute Dice per batch and release predictions immediately to avoid caching full volumes.
             preds = [post_pred(i) for i in decollate_batch(logits)]
             labels_list = [post_label(i) for i in decollate_batch(labels)]
             dice_metric(y_pred=preds, y=labels_list)
+
+            del preds, labels_list, logits, images, labels
 
     mean_dice_all, mean_dice_per_class, mean_fg_dice = compute_metrics(dice_metric, NUM_CLASSES)
     return mean_dice_all, mean_dice_per_class, mean_fg_dice
