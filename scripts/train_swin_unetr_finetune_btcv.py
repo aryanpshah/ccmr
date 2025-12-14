@@ -154,7 +154,7 @@ def main():
         to_onehot_y=True,
         softmax=True,
         include_background=True,
-        ce_weight=class_weights,
+        weight=class_weights,
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr_max, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
