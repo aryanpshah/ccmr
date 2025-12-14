@@ -284,8 +284,7 @@ def create_hvsmr_loaders(
             RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
         ]
     )
-    # Use the requested crop count (8) for all splits.
-    rand_crop_samples = 8
+    rand_crop_samples = 2 if is_l5_split else 8
 
     train_transforms = Compose(
         [
@@ -337,10 +336,11 @@ def create_hvsmr_loaders(
     # Debug info
     print(f"Loaded {len(train_ds)} training cases and {len(val_ds)} validation cases.")
     first_batch = next(iter(train_loader))
-    img, lab = first_batch["image"], first_batch["label"]
-    print(f"First train batch shapes -> image: {tuple(img.shape)}, label: {tuple(lab.shape)}; roi_size={roi_size}")
-    print(f"Debug shapes after transforms: img={tuple(img.shape)}, lab={tuple(lab.shape)}")
-    assert img.shape[2:] == lab.shape[2:], "Image and label spatial shapes must match"
+    images, lab = first_batch["image"], first_batch["label"]
+    print(f"First train batch shapes -> image: {tuple(images.shape)}, label: {tuple(lab.shape)}; roi_size={roi_size}")
+    print(f"[DEBUG] effective_train_patches_per_step = {images.shape[0]}")
+    print(f"Debug shapes after transforms: img={tuple(images.shape)}, lab={tuple(lab.shape)}")
+    assert images.shape[2:] == lab.shape[2:], "Image and label spatial shapes must match"
 
     return train_loader, val_loader
 
