@@ -284,7 +284,7 @@ def create_hvsmr_loaders(
             RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
         ]
     )
-    rand_crop_samples = 2 if is_l5_split else 8
+    rand_crop_samples = 2
 
     train_transforms = Compose(
         [
