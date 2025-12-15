@@ -29,6 +29,7 @@ class LoRALinear(nn.Module):
         lora_alpha: float = 1.0,
         bias: bool = True,
         base_layer: nn.Linear | None = None,
+        zero_init_base: bool = False,
     ) -> None:
         super().__init__()
         self.in_features = in_features
@@ -53,6 +54,12 @@ class LoRALinear(nn.Module):
             self.bias = nn.Parameter(bias_data, requires_grad=not freeze_base)
 
         if self.r > 0:
+            if zero_init_base and base_layer is None:
+                # Optional path: zero only when explicitly requested and no pretrained base is provided.
+                with torch.no_grad():
+                    self.weight.zero_()
+                    if bias_data is not None:
+                        self.bias.zero_()
             self.lora_A = nn.Parameter(torch.zeros((out_features, self.r)))
             self.lora_B = nn.Parameter(torch.zeros((self.r, in_features)))
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
@@ -192,6 +199,26 @@ def get_lora_params(model: nn.Module) -> list[nn.Parameter]:
     return [p for _, p in model.named_parameters() if getattr(p, "_is_lora_param", False) and p.requires_grad]
 
 
+def summarize_lora_modules(model: nn.Module) -> None:
+    """
+    Print a brief summary of all LoRA modules and their trainable parameter counts.
+    """
+    lines = []
+    total = 0
+    for name, module in model.named_modules():
+        if isinstance(module, LoRALinear):
+            trainable = sum(p.numel() for p in module.parameters() if p.requires_grad)
+            total += trainable
+            lines.append(f"  {name}: trainable={trainable:,} (r={module.r}, alpha={module.lora_alpha})")
+    print("LoRA modules:")
+    if lines:
+        for line in lines:
+            print(line)
+    else:
+        print("  (none found)")
+    print(f"Total LoRA trainable params: {total:,}")
+
+
 def count_parameters(model: nn.Module) -> tuple[int, int]:
     """Return (total_params, trainable_params)."""
     total = sum(p.numel() for p in model.parameters())
@@ -207,6 +234,31 @@ def log_model_params(model: nn.Module) -> None:
     print(
         f"Params - total: {total:,} | trainable: {trainable:,} | LoRA trainable: {lora_count:,}"
     )
+
+
+def freeze_backbone_enable_lora_and_decoder(model: nn.Module) -> dict[str, int]:
+    """
+    Freeze everything, then enable LoRA params + decoder + segmentation head.
+    Returns a dict with grouped trainable parameter counts.
+    """
+    for param in model.parameters():
+        param.requires_grad = False
+
+    counts = {"lora": 0, "decoder": 0, "head": 0, "other": 0}
+    for name, param in model.named_parameters():
+        root = name.split(".")[0]
+        if getattr(param, "_is_lora_param", False):
+            param.requires_grad = True
+            counts["lora"] += param.numel()
+        elif root.startswith("decoder"):
+            param.requires_grad = True
+            counts["decoder"] += param.numel()
+        elif root.startswith("out"):
+            param.requires_grad = True
+            counts["head"] += param.numel()
+        else:
+            counts["other"] += param.numel()
+    return counts
 
 
 def load_checkpoint_then_add_lora(
