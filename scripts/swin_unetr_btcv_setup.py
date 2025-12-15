@@ -59,6 +59,17 @@ NUM_CLASSES = 9  # 9 classes total: label 0 = background, labels 1-8 = structure
 DEFAULT_FEATURE_SIZE = 48
 DEFAULT_SPACING = (1.0, 1.0, 1.0)  # HVSMR resampled spacing used in loaders
 DEFAULT_ROI_SIZE = (96, 96, 96)  # Default patch size; raise/lower depending on GPU memory
+DEFAULT_CLASS_WEIGHTS = (
+    0.05,
+    1.0,
+    1.0,
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+    3.0,
+    3.0,
+)  # Background is lightly down-weighted; smallest structures are emphasized.
 DEFAULT_PRETRAINED_URL = (
     # Public NGC bundle; may require `NGC_CLI_API_KEY` for authenticated download.
     "https://api.ngc.nvidia.com/v2/org/nvidia/teams/monaitoolkit/models/"
@@ -73,6 +84,17 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     set_determinism(seed=seed)
+
+
+def get_default_class_weights(device: torch.device) -> torch.Tensor:
+    """
+    Return the default 9-element class weight vector (background + 8 structures).
+    Ensures the length matches NUM_CLASSES and moves the tensor to the requested device.
+    """
+    weights = torch.tensor(DEFAULT_CLASS_WEIGHTS, dtype=torch.float32, device=device)
+    if weights.numel() != NUM_CLASSES:
+        raise ValueError(f"Expected {NUM_CLASSES} class weights, got {weights.numel()}")
+    return weights
 
 
 class SegmentationHead(torch.nn.Module):
@@ -426,15 +448,27 @@ def create_model(device: torch.device, roi_size: Iterable[int]) -> SwinUNETR:
     size must remain consistent with preprocessing (e.g., 96^3 or padded to a multiple of 32).
     """
     roi_size = tuple(int(v) for v in roi_size)
-    model = SwinUNETR(
+    swin_kwargs = dict(
         in_channels=1,
         # 9 classes total: label 0 = background, labels 1-8 = structures
         out_channels=NUM_CLASSES,
         feature_size=DEFAULT_FEATURE_SIZE,
         use_checkpoint=True,
         spatial_dims=3,
-        img_size=roi_size,
     )
+    try:
+        model = SwinUNETR(img_size=roi_size, **swin_kwargs)
+    except TypeError as exc:
+        if "img_size" not in str(exc):
+            raise
+        # Newer MONAI versions drop the img_size arg; fall back gracefully.
+        model = SwinUNETR(**swin_kwargs)
+
+    head_out_channels = model.out.conv.conv.weight.shape[0]
+    if head_out_channels != NUM_CLASSES:
+        raise ValueError(
+            f"Swin-UNETR head channels mismatch: expected {NUM_CLASSES}, got {head_out_channels}"
+        )
     return model.to(device)
 
 

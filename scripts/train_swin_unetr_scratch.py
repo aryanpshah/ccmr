@@ -26,6 +26,7 @@ from swin_unetr_btcv_setup import (  # noqa: E402
     NUM_CLASSES,
     create_model,
     create_hvsmr_loaders,
+    get_default_class_weights,
     log_and_validate_batch_shape,
     set_seed,
 )
@@ -38,12 +39,18 @@ def train_epoch(
     device: torch.device,
     loss_function: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
+    epoch_idx: int,
+    debug_label_hist_steps: int = 3,
 ) -> float:
     model.train()
     epoch_loss = 0.0
     for step, batch in enumerate(loader, start=1):
         images = batch["image"].to(device)
         labels = batch["label"].to(device)
+        if epoch_idx == 0 and step <= debug_label_hist_steps:
+            with torch.no_grad():
+                label_hist = torch.bincount(labels.long().flatten(), minlength=NUM_CLASSES).cpu().numpy().tolist()
+            print(f"  [DEBUG] label histogram (step {step:02d}): {label_hist}")
         optimizer.zero_grad(set_to_none=True)
         logits = model(images)
         loss = loss_function(logits, labels)
@@ -65,17 +72,28 @@ def validate_epoch(
     loader: torch.utils.data.DataLoader,
     device: torch.device,
     roi_size: Iterable[int],
+    epoch_idx: int,
+    debug_interval: int = 20,
 ) -> Tuple[float, np.ndarray, float]:
     model.eval()
     post_pred = AsDiscrete(argmax=True, to_onehot=NUM_CLASSES)
     post_label = AsDiscrete(to_onehot=NUM_CLASSES)
     dice_metric = DiceMetric(include_background=True, reduction="none", num_classes=NUM_CLASSES)
+    should_debug = epoch_idx == 0 or ((epoch_idx + 1) % max(1, debug_interval) == 0)
+    logged_debug = False
 
     with torch.no_grad():
-        for batch in loader:
+        for batch_idx, batch in enumerate(loader, start=1):
             images = batch["image"].to(device)
             labels = batch["label"].to(device)
             logits = sliding_window_inference(images, roi_size=roi_size, sw_batch_size=1, predictor=model)
+            if should_debug and not logged_debug:
+                pred_classes = torch.argmax(logits, dim=1)
+                gt_unique = torch.unique(labels).detach().cpu().numpy().tolist()
+                pred_unique = torch.unique(pred_classes).detach().cpu().numpy().tolist()
+                print(f"  [DEBUG] val uniq labels (epoch {epoch_idx + 1}, batch {batch_idx}): GT={gt_unique}, PRED={pred_unique}")
+                logged_debug = True
+                del pred_classes
 
             # Batch-wise Dice computation only; drop tensors after use to avoid keeping full 3D volumes.
             preds = [post_pred(i) for i in decollate_batch(logits)]
@@ -128,7 +146,9 @@ def main():
 
     model = create_model(device=device, roi_size=roi_size)
 
-    loss_function = DiceCELoss(to_onehot_y=True, softmax=True, include_background=True)
+    class_weights = get_default_class_weights(device)
+    print(f"Class weights (DiceCELoss CE component): {class_weights.tolist()}")
+    loss_function = DiceCELoss(to_onehot_y=True, softmax=True, include_background=True, weight=class_weights)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr_max, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=max(1, args.epochs), eta_min=args.lr_min
@@ -146,10 +166,12 @@ def main():
 
     for epoch in range(args.epochs):
         print(f"Epoch {epoch + 1}/{args.epochs}")
-        train_loss = train_epoch(model, train_loader, device, loss_function, optimizer)
+        train_loss = train_epoch(model, train_loader, device, loss_function, optimizer, epoch_idx=epoch)
         print(f"  Mean train loss: {train_loss:.4f}")
 
-        val_mean_all, val_per_class_mean, val_mean_fg = validate_epoch(model, val_loader, device, roi_size)
+        val_mean_all, val_per_class_mean, val_mean_fg = validate_epoch(
+            model, val_loader, device, roi_size, epoch_idx=epoch
+        )
         per_class_str = ", ".join(f"{i}:{float(v):.3f}" for i, v in enumerate(val_per_class_mean))
         print(f"  Val mean Dice (all): {val_mean_all:.4f}")
         print(f"  Val mean Dice (fg): {val_mean_fg:.4f}")
