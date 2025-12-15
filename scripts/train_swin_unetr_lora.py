@@ -4,6 +4,7 @@ Train Swin-UNETR with LoRA adapters on attention Q/V projections.
 Defaults freeze the backbone so only LoRA params (and any unfrozen heads) train.
 """
 import argparse
+import math
 import sys
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
@@ -30,12 +31,14 @@ from swin_unetr_btcv_setup import (  # noqa: E402
     log_and_validate_batch_shape,
     set_seed,
 )
-from training_utils import compute_metrics, load_checkpoint, save_checkpoint  # noqa: E402
+from training_utils import compute_metrics, load_checkpoint  # noqa: E402
 from models.lora_utils import (  # noqa: E402
     add_lora_to_swin_unetr,
     count_parameters,
+    freeze_backbone_enable_lora_and_decoder,
     get_lora_params,
     log_model_params,
+    summarize_lora_modules,
 )
 
 
@@ -55,7 +58,8 @@ def train_epoch(
         if max_train_batches is not None and step >= max_train_batches:
             break
         images = batch["image"].to(device)
-        labels = batch["label"].to(device)
+        labels = batch["label"].to(device).long()
+        assert torch.all((labels >= 0) & (labels < NUM_CLASSES)), f"Found invalid label values: {torch.unique(labels)}"
         optimizer.zero_grad(set_to_none=True)
         logits = model(images)
         loss = loss_function(logits, labels)
@@ -113,15 +117,25 @@ def validate_epoch(
     dice_metric = DiceMetric(include_background=True, reduction="none", num_classes=NUM_CLASSES)
 
     with torch.no_grad():
-        for batch in loader:
+        for batch_idx, batch in enumerate(loader):
             images = batch["image"].to(device)
-            labels = batch["label"].to(device)
+            labels = batch["label"].to(device).long()
             logits = sliding_window_inference(images, roi_size=roi_size, sw_batch_size=1, predictor=model)
+            probs = torch.softmax(logits, dim=1)
 
             # Compute Dice per batch and release predictions immediately to avoid caching full volumes.
-            preds = [post_pred(i) for i in decollate_batch(logits)]
+            preds = [post_pred(i) for i in decollate_batch(probs)]
             labels_list = [post_label(i) for i in decollate_batch(labels)]
             dice_metric(y_pred=preds, y=labels_list)
+
+            if batch_idx < 2:
+                gt_unique = torch.unique(labels)
+                pred_unique = torch.unique(torch.argmax(probs, dim=1))
+                gt_hist = torch.bincount(labels.long().flatten(), minlength=NUM_CLASSES).cpu().tolist()
+                print(
+                    f"[VAL DEBUG] batch={batch_idx} gt_unique={gt_unique.tolist()} pred_unique={pred_unique.tolist()} "
+                    f"gt_hist={gt_hist}"
+                )
 
             del preds, labels_list, logits, images, labels
 
@@ -137,9 +151,10 @@ def main():
     parser.add_argument("--label_root", type=Path, default=None, help="Root dir for labels if not under data_root (defaults to data_root/labelsTr).")
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--lr", "--lr_max", dest="lr_max", type=float, default=6e-5, help="Initial / max learning rate.")
-    parser.add_argument("--lr_min", type=float, default=6e-6, help="Final learning rate at the end of training.")
-    parser.add_argument("--weight_decay", type=float, default=3e-3)
+    parser.add_argument("--lr", "--lr_max", dest="lr_max", type=float, default=2e-4, help="Initial / max learning rate.")
+    parser.add_argument("--lr_min", type=float, default=2e-5, help="Final learning rate at the end of training.")
+    parser.add_argument("--warmup_epochs", type=int, default=5, help="Linear warmup epochs before cosine decay.")
+    parser.add_argument("--weight_decay", type=float, default=1e-2)
     parser.add_argument("--output_dir", type=Path, required=True, help="Directory for checkpoints/logs.")
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
@@ -156,6 +171,7 @@ def main():
         default=None,
         help="If set, limit the number of training batches per epoch (debug only).",
     )
+    parser.add_argument("--overfit_debug", action="store_true", help="Overfit on a tiny subset (1-2 cases) with no augmentations.")
     args = parser.parse_args()
 
     print("Training Swin-UNETR with LoRA adapters (Q/V).")
@@ -174,6 +190,7 @@ def main():
         roi_size=roi_size,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        overfit_debug=args.overfit_debug,
     )
     log_and_validate_batch_shape(train_loader, roi_size)
     print(f"Summary: train cases={len(train_loader.dataset)}, val cases={len(val_loader.dataset)}, roi_size={roi_size}, batch_size={args.batch_size}")
@@ -190,25 +207,17 @@ def main():
             lora_alpha=args.lora_alpha,
             freeze_backbone=args.freeze_backbone,
         )
+        summarize_lora_modules(model)
     else:
         # lora_rank == 0: train as usual
         args.freeze_backbone = False
 
     if args.freeze_backbone:
-        frozen_params = 0
-        trainable_params = 0
-        for name, param in model.named_parameters():
-            name_lower = name.lower()
-            if "lora" in name_lower:
-                param.requires_grad = True
-                trainable_params += param.numel()
-            elif name.startswith("swinViT"):
-                param.requires_grad = False
-                frozen_params += param.numel()
-            else:
-                param.requires_grad = True
-                trainable_params += param.numel()
-        print(f"Backbone frozen params: {frozen_params} | Trainable (LoRA + decoder + head): {trainable_params}")
+        counts = freeze_backbone_enable_lora_and_decoder(model)
+        print(
+            "Trainable parameter groups -> "
+            f"LoRA: {counts['lora']:,} | Decoder: {counts['decoder']:,} | Head: {counts['head']:,} | Other (still frozen): {counts['other']:,}"
+        )
 
     total_params, trainable_params = count_parameters(model)
     lora_params = get_lora_params(model)
@@ -228,27 +237,42 @@ def main():
 
     loss_function = DiceCELoss(to_onehot_y=True, softmax=True, include_background=True)
     trainable_params_for_optim = [p for p in model.parameters() if p.requires_grad]
+    opt_param_count = sum(p.numel() for p in trainable_params_for_optim)
+    print(f"Optimizer will update {opt_param_count:,} parameters (matches trainable count above).")
     optimizer = torch.optim.AdamW(trainable_params_for_optim, lr=args.lr_max, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(1, args.epochs), eta_min=args.lr_min
-    )
-    # Preview a few LR steps to verify scheduler wiring (does not affect the real scheduler).
-    with torch.no_grad():
-        dummy_opt = torch.optim.SGD([torch.zeros(1)], lr=args.lr_max)
-        dummy_sched = torch.optim.lr_scheduler.CosineAnnealingLR(dummy_opt, T_max=max(1, args.epochs), eta_min=args.lr_min)
-        lr_preview = [dummy_sched.get_last_lr()[0]]
-        for _ in range(3):
-            dummy_sched.step()
-            lr_preview.append(dummy_sched.get_last_lr()[0])
-        print(f"LR preview (first 4 steps): {[f'{lr:.3e}' for lr in lr_preview]}")
+
+    def lr_lambda(epoch: int) -> float:
+        if args.warmup_epochs > 0 and epoch < args.warmup_epochs:
+            return float(epoch + 1) / float(args.warmup_epochs)
+        progress = (epoch - args.warmup_epochs) / max(1, args.epochs - args.warmup_epochs)
+        cosine = 0.5 * (1 + math.cos(math.pi * min(1.0, progress)))
+        min_scale = args.lr_min / args.lr_max
+        return min_scale + (1 - min_scale) * cosine
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+    print(f"LR preview (first 4 epochs): {[f'{args.lr_max * lr_lambda(e):.3e}' for e in range(4)]}")
 
     best_dice = -1.0
     epochs_no_improve = 0
-    best_path = args.output_dir / "best_model.pt"
-    last_path = args.output_dir / "last_model.pt"
+    best_path = args.output_dir / "best_model.pth"
+    last_path = args.output_dir / "last_model.pth"
+
+    def save_training_state(path: Path, epoch: int, best_metric: float) -> None:
+        state = {
+            "state_dict": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "epoch": epoch,
+            "best_dice": best_metric,
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(state, path)
 
     for epoch in range(args.epochs):
         print(f"Epoch {epoch + 1}/{args.epochs}")
+        scheduler.step(epoch)
+        current_lr = scheduler.get_last_lr()[0]
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = current_lr
         train_loss = train_epoch(
             model,
             train_loader,
@@ -259,20 +283,23 @@ def main():
             max_train_batches=args.max_train_batches,
         )
         print(f"  Mean train loss: {train_loss:.4f}")
+        print(f"  Learning rate: {current_lr:.3e}")
 
         val_mean_all, val_per_class_mean, val_mean_fg = validate_epoch(model, val_loader, device, roi_size)
         per_class_str = ", ".join(f"{i}:{float(v):.3f}" for i, v in enumerate(val_per_class_mean))
+        per_class_fg_str = ", ".join(f"{i}:{float(val_per_class_mean[i]):.3f}" for i in range(1, NUM_CLASSES))
         print(f"  Val mean Dice (all): {val_mean_all:.4f}")
         print(f"  Val mean Dice (fg): {val_mean_fg:.4f}")
         print(f"  Per-class mean Dice: [{per_class_str}]")
-        scheduler.step()
+        print(f"  Per-class mean Dice (1-8): [{per_class_fg_str}]")
 
-        save_checkpoint(model, last_path)
+        save_training_state(last_path, epoch=epoch, best_metric=best_dice)
         if val_mean_all > best_dice:
+            prev_best = best_dice
             best_dice = val_mean_all
             epochs_no_improve = 0
-            save_checkpoint(model, best_path)
-            print(f"  New best model saved to {best_path} (Dice={best_dice:.4f})")
+            save_training_state(best_path, epoch=epoch, best_metric=best_dice)
+            print(f"  New best model saved to {best_path} (Dice={best_dice:.4f}, prev_best={prev_best:.4f})")
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= args.patience:

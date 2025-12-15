@@ -279,6 +279,7 @@ def create_hvsmr_loaders(
     roi_size: Tuple[int, int, int] = (96, 96, 96),
     batch_size: int = 1,
     num_workers: int = 4,
+    overfit_debug: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create train/val loaders for HVSMR using nnU-Net split files and 3D patches.
@@ -287,6 +288,10 @@ def create_hvsmr_loaders(
     """
     train_ids = load_case_ids(train_split_file)
     val_ids = load_case_ids(val_split_file)
+    if overfit_debug:
+        train_ids = train_ids[:2]
+        val_ids = val_ids[:1]
+        print(f"[OVERFIT DEBUG] Restricting to {len(train_ids)} train / {len(val_ids)} val cases; augmentations disabled.")
     train_dicts = build_dataset_dicts(data_root, train_ids, label_root=label_root)
     val_dicts = build_dataset_dicts(data_root, val_ids, label_root=label_root)
 
@@ -306,34 +311,38 @@ def create_hvsmr_loaders(
             RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
         ]
     )
-    rand_crop_samples = 2
+    rand_crop_samples = 1 if overfit_debug else 2
 
-    train_transforms = Compose(
-        [
-            LoadImaged(keys=spatial_keys),
-            ChannelFirstd(keys=spatial_keys),
-            Spacingd(keys=spatial_keys, pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
-            Orientationd(keys=spatial_keys, axcodes="RAS"),
-            # MRI intensity normalization: z-score on non-zero voxels, channel-wise.
-            NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
-            SpatialPadd(keys=spatial_keys, spatial_size=roi_size, mode=("reflect", "constant")),
-            RandCropByPosNegLabeld(
-                keys=spatial_keys,
-                label_key="label",
-                spatial_size=roi_size,
-                pos=3,
-                neg=1,
-                num_samples=rand_crop_samples,
-            ),
-            ResizeWithPadOrCropd(keys=spatial_keys, spatial_size=roi_size),
-            RandFlipd(keys=spatial_keys, prob=0.5, spatial_axis=0),
-            RandFlipd(keys=spatial_keys, prob=0.5, spatial_axis=1),
-            RandFlipd(keys=spatial_keys, prob=0.5, spatial_axis=2),
-            RandRotate90d(keys=spatial_keys, prob=0.5, max_k=3),
-            *intensity_transforms,
-            EnsureTyped(keys=spatial_keys),
-        ]
-    )
+    train_ops = [
+        LoadImaged(keys=spatial_keys),
+        ChannelFirstd(keys=spatial_keys),
+        Spacingd(keys=spatial_keys, pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
+        Orientationd(keys=spatial_keys, axcodes="RAS"),
+        # MRI intensity normalization: z-score on non-zero voxels, channel-wise.
+        NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
+        SpatialPadd(keys=spatial_keys, spatial_size=roi_size, mode=("reflect", "constant")),
+        RandCropByPosNegLabeld(
+            keys=spatial_keys,
+            label_key="label",
+            spatial_size=roi_size,
+            pos=3,
+            neg=1,
+            num_samples=rand_crop_samples,
+        ),
+        ResizeWithPadOrCropd(keys=spatial_keys, spatial_size=roi_size),
+    ]
+    if not overfit_debug:
+        train_ops.extend(
+            [
+                RandFlipd(keys=spatial_keys, prob=0.5, spatial_axis=0),
+                RandFlipd(keys=spatial_keys, prob=0.5, spatial_axis=1),
+                RandFlipd(keys=spatial_keys, prob=0.5, spatial_axis=2),
+                RandRotate90d(keys=spatial_keys, prob=0.5, max_k=3),
+                *intensity_transforms,
+            ]
+        )
+    train_ops.append(EnsureTyped(keys=spatial_keys))
+    train_transforms = Compose(train_ops)
 
     val_transforms = Compose(
         [
