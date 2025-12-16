@@ -45,3 +45,11 @@ setup_history_raw.txt
 
 # Local setup history (optional; remove if you want this tracked)
 # setup_history_raw.txt
+
+# Local experiment artifacts
+runs/
+Finished*
+debug_pred_*.nii.gz
+data/splits/*subset*.txt
+*.exe
+echo
