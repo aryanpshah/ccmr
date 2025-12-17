@@ -293,6 +293,10 @@ def create_hvsmr_loaders(
         val_ids = val_ids[:1]
         print(f"[OVERFIT DEBUG] Restricting to {len(train_ids)} train / {len(val_ids)} val cases; augmentations disabled.")
     train_dicts = build_dataset_dicts(data_root, train_ids, label_root=label_root)
+    if overfit_debug:
+        debug_repeat_factor = 32
+        train_dicts = train_dicts * debug_repeat_factor
+        print(f"[OVERFIT DEBUG] Repeating train set {debug_repeat_factor}x -> {len(train_dicts)} samples for more steps per epoch.")
     val_dicts = build_dataset_dicts(data_root, val_ids, label_root=label_root)
 
     spatial_keys = ["image", "label"]
@@ -311,7 +315,8 @@ def create_hvsmr_loaders(
             RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
         ]
     )
-    rand_crop_samples = 1 if overfit_debug else 2
+    rand_crop_samples = 8 if overfit_debug else 2
+    crop_num_samples = 1 if overfit_debug else rand_crop_samples
 
     train_ops = [
         LoadImaged(keys=spatial_keys),
@@ -327,7 +332,7 @@ def create_hvsmr_loaders(
             spatial_size=roi_size,
             num_classes=NUM_CLASSES,
             ratios=[0.05, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.25, 0.25],
-            num_samples=rand_crop_samples,
+            num_samples=crop_num_samples,
         ),
         ResizeWithPadOrCropd(keys=spatial_keys, spatial_size=roi_size),
     ]
