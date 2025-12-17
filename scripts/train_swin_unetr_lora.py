@@ -15,6 +15,7 @@ from monai.data import decollate_batch
 from monai.inferers import sliding_window_inference
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
+from monai.networks.utils import one_hot
 from monai.transforms import AsDiscrete
 from monai.utils import set_determinism
 
@@ -49,6 +50,8 @@ def train_epoch(
     loss_function: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     epoch: int,
+    rare_dice_w: float,
+    rare_classes: list[int],
     overfit_debug: bool = False,
     max_train_batches: Optional[int] = None,
 ) -> float:
@@ -68,7 +71,23 @@ def train_epoch(
         assert torch.all((labels >= 0) & (labels < NUM_CLASSES)), f"Found invalid label values: {torch.unique(labels)}"
         optimizer.zero_grad(set_to_none=True)
         logits = model(images)
-        loss = loss_function(logits, labels)
+        base_loss = loss_function(logits, labels)
+
+        rare_dice_loss = torch.tensor(0.0, device=device, dtype=logits.dtype)
+        if rare_dice_w > 0.0 and rare_classes:
+            probs = torch.softmax(logits, dim=1)
+            y_onehot = one_hot(labels, num_classes=NUM_CLASSES)
+            y_r = y_onehot[:, rare_classes]
+            rare_voxels = y_r.sum()
+            if rare_voxels.item() > 0:
+                p_r = probs[:, rare_classes]
+                intersect = (p_r * y_r).sum()
+                denom = p_r.sum() + rare_voxels
+                eps = 1e-6
+                dice = (2 * intersect + eps) / (denom + eps)
+                rare_dice_loss = 1.0 - dice
+
+        loss = base_loss + rare_dice_w * rare_dice_loss
         loss.backward()
         if epoch == 0 and step == 0:
             lora_grad_norm = 0.0
@@ -177,6 +196,13 @@ def main():
         help="If set, limit the number of training batches per epoch (debug only).",
     )
     parser.add_argument("--overfit_debug", action="store_true", help="Overfit on a tiny subset (1-2 cases) with no augmentations.")
+    parser.add_argument("--rare_dice_w", type=float, default=0.2, help="Weight for rare-class Dice regularizer.")
+    parser.add_argument(
+        "--rare_classes",
+        type=str,
+        default="7,8",
+        help="Comma-separated list of rare class indices to regularize (e.g., '7,8').",
+    )
     args = parser.parse_args()
 
     print("Training Swin-UNETR with LoRA adapters (Q/V).")
@@ -185,6 +211,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     roi_size = tuple(args.roi_size)
+
+    rare_classes = sorted({int(x) for x in args.rare_classes.split(",") if x.strip()})
+    print(f"Rare-class Dice regularizer -> classes={rare_classes}, weight={args.rare_dice_w}")
 
     # The train/val splits are read from the same txt files used by nnU-Net, so Swin-UNETR sees the same images as nnU-Net for a fair comparison.
     train_loader, val_loader = create_hvsmr_loaders(
@@ -241,10 +270,10 @@ def main():
         _ = model(dummy)
 
     ce_weights = torch.tensor(
-        [0.03, 0.2, 0.2, 0.2, 0.2, 1.5, 1.5, 3.0, 3.0],
+        [0.05, 0.2, 0.2, 0.2, 0.2, 1.0, 1.0, 1.2, 1.2],
         dtype=torch.float32,
         device=device,
-    )  # upweight classes 7-8 heavily due to extreme imbalance
+    )  # modestly upweight rare classes (7-8) to stabilize CE
     loss_function = DiceCELoss(
         to_onehot_y=True,
         softmax=True,
@@ -295,6 +324,8 @@ def main():
             loss_function,
             optimizer,
             epoch,
+            rare_dice_w=args.rare_dice_w,
+            rare_classes=rare_classes,
             overfit_debug=args.overfit_debug,
             max_train_batches=args.max_train_batches,
         )
