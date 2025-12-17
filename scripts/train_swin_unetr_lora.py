@@ -49,6 +49,7 @@ def train_epoch(
     loss_function: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     epoch: int,
+    overfit_debug: bool = False,
     max_train_batches: Optional[int] = None,
 ) -> float:
     model.train()
@@ -59,6 +60,11 @@ def train_epoch(
             break
         images = batch["image"].to(device)
         labels = batch["label"].to(device).long()
+        step_display = step + 1
+        if overfit_debug and epoch == 0 and step < 20:
+            gt_unique = torch.unique(labels).detach().cpu().tolist()
+            gt_hist = torch.bincount(labels.flatten(), minlength=NUM_CLASSES).detach().cpu().tolist()
+            print(f"[TRAIN DEBUG] step={step_display} gt_unique={gt_unique} gt_hist={gt_hist}")
         assert torch.all((labels >= 0) & (labels < NUM_CLASSES)), f"Found invalid label values: {torch.unique(labels)}"
         optimizer.zero_grad(set_to_none=True)
         logits = model(images)
@@ -96,7 +102,6 @@ def train_epoch(
         loss_value = loss.item()
         epoch_loss += loss_value
         steps_processed += 1
-        step_display = step + 1
         if step_display == 1 or step_display % 5 == 0:
             print(f"  train step {step_display:03d} - loss: {loss_value:.4f}")
 
@@ -235,7 +240,17 @@ def main():
         dummy = torch.randn((1, 1, *roi_size), device=device)
         _ = model(dummy)
 
-    loss_function = DiceCELoss(to_onehot_y=True, softmax=True, include_background=True)
+    ce_weights = torch.tensor(
+        [0.05, 0.2, 0.2, 0.2, 0.2, 1.0, 1.0, 1.2, 1.2],
+        dtype=torch.float32,
+        device=device,
+    )
+    loss_function = DiceCELoss(
+        to_onehot_y=True,
+        softmax=True,
+        include_background=True,
+        ce_weight=ce_weights,
+    )
     trainable_params_for_optim = [p for p in model.parameters() if p.requires_grad]
     opt_param_count = sum(p.numel() for p in trainable_params_for_optim)
     print(f"Optimizer will update {opt_param_count:,} parameters (matches trainable count above).")
@@ -280,6 +295,7 @@ def main():
             loss_function,
             optimizer,
             epoch,
+            overfit_debug=args.overfit_debug,
             max_train_batches=args.max_train_batches,
         )
         print(f"  Mean train loss: {train_loss:.4f}")
