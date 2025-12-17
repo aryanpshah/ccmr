@@ -30,7 +30,7 @@ from monai.transforms import (
     Orientationd,
     RandFlipd,
     RandRotate90d,
-    RandCropByPosNegLabeld,
+    RandCropByLabelClassesd,
     RandScaleIntensityd,
     RandShiftIntensityd,
     ScaleIntensityRanged,
@@ -321,12 +321,12 @@ def create_hvsmr_loaders(
         # MRI intensity normalization: z-score on non-zero voxels, channel-wise.
         NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
         SpatialPadd(keys=spatial_keys, spatial_size=roi_size, mode=("reflect", "constant")),
-        RandCropByPosNegLabeld(
+        RandCropByLabelClassesd(
             keys=spatial_keys,
             label_key="label",
             spatial_size=roi_size,
-            pos=3,
-            neg=1,
+            num_classes=NUM_CLASSES,
+            ratios=[0.05, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.25, 0.25],
             num_samples=rand_crop_samples,
         ),
         ResizeWithPadOrCropd(keys=spatial_keys, spatial_size=roi_size),
