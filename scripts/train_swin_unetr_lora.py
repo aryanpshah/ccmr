@@ -241,15 +241,15 @@ def main():
         _ = model(dummy)
 
     ce_weights = torch.tensor(
-        [0.05, 0.2, 0.2, 0.2, 0.2, 1.0, 1.0, 1.2, 1.2],
+        [0.03, 0.2, 0.2, 0.2, 0.2, 1.5, 1.5, 3.0, 3.0],
         dtype=torch.float32,
         device=device,
-    )
+    )  # upweight classes 7-8 heavily due to extreme imbalance
     loss_function = DiceCELoss(
         to_onehot_y=True,
         softmax=True,
         include_background=True,
-        weight=ce_weights,
+        ce_weight=ce_weights,
     )
     trainable_params_for_optim = [p for p in model.parameters() if p.requires_grad]
     opt_param_count = sum(p.numel() for p in trainable_params_for_optim)
