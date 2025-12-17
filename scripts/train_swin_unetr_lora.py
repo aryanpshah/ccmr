@@ -249,7 +249,7 @@ def main():
         to_onehot_y=True,
         softmax=True,
         include_background=True,
-        ce_weight=ce_weights,
+        weight=ce_weights,
     )
     trainable_params_for_optim = [p for p in model.parameters() if p.requires_grad]
     opt_param_count = sum(p.numel() for p in trainable_params_for_optim)
