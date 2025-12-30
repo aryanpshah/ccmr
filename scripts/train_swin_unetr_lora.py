@@ -50,6 +50,7 @@ def train_epoch(
     loss_function: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     epoch: int,
+    grad_accum: int,
     rare_dice_w: float,
     rare_classes: list[int],
     overfit_debug: bool = False,
@@ -58,6 +59,7 @@ def train_epoch(
     model.train()
     epoch_loss = 0.0
     steps_processed = 0
+    optimizer.zero_grad(set_to_none=True)
     for step, batch in enumerate(loader):
         if max_train_batches is not None and step >= max_train_batches:
             break
@@ -69,7 +71,6 @@ def train_epoch(
             gt_hist = torch.bincount(labels.flatten(), minlength=NUM_CLASSES).detach().cpu().tolist()
             print(f"[TRAIN DEBUG] step={step_display} gt_unique={gt_unique} gt_hist={gt_hist}")
         assert torch.all((labels >= 0) & (labels < NUM_CLASSES)), f"Found invalid label values: {torch.unique(labels)}"
-        optimizer.zero_grad(set_to_none=True)
         logits = model(images)
         base_loss = loss_function(logits, labels)
 
@@ -88,7 +89,8 @@ def train_epoch(
                 rare_dice_loss = 1.0 - dice
 
         loss = base_loss + rare_dice_w * rare_dice_loss
-        loss.backward()
+        loss_to_backprop = loss / grad_accum
+        loss_to_backprop.backward()
         if epoch == 0 and step == 0:
             lora_grad_norm = 0.0
             decoder_head_grad_norm = 0.0
@@ -115,7 +117,9 @@ def train_epoch(
                 for name, param in model.named_parameters():
                     if name in frozen_with_grads:
                         param.grad = None
-        optimizer.step()
+        if (step + 1) % grad_accum == 0:
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
 
         # Cache scalar before freeing tensors to avoid keeping computation graphs/activations.
         loss_value = loss.item()
@@ -125,7 +129,10 @@ def train_epoch(
             print(f"  train step {step_display:03d} - loss: {loss_value:.4f}")
 
         # Drop references so per-step allocations can be released promptly.
-        del loss, logits, images, labels
+        del loss, loss_to_backprop, logits, images, labels
+    if steps_processed % grad_accum != 0:
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
     return epoch_loss / max(1, steps_processed)
 
 
@@ -175,6 +182,7 @@ def main():
     parser.add_argument("--label_root", type=Path, default=None, help="Root dir for labels if not under data_root (defaults to data_root/labelsTr).")
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--grad_accum", type=int, default=1, help="Accumulate gradients for N steps before optimizer.step().")
     parser.add_argument("--lr", "--lr_max", dest="lr_max", type=float, default=2e-4, help="Initial / max learning rate.")
     parser.add_argument("--lr_min", type=float, default=2e-5, help="Final learning rate at the end of training.")
     parser.add_argument("--warmup_epochs", type=int, default=5, help="Linear warmup epochs before cosine decay.")
@@ -211,6 +219,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     roi_size = tuple(args.roi_size)
+    print(f"Gradient accumulation: grad_accum={args.grad_accum}")
 
     rare_classes = sorted({int(x) for x in args.rare_classes.split(",") if x.strip()})
     print(f"Rare-class Dice regularizer -> classes={rare_classes}, weight={args.rare_dice_w}")
@@ -324,6 +333,7 @@ def main():
             loss_function,
             optimizer,
             epoch,
+            grad_accum=args.grad_accum,
             rare_dice_w=args.rare_dice_w,
             rare_classes=rare_classes,
             overfit_debug=args.overfit_debug,
