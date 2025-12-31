@@ -209,9 +209,13 @@ def validate_epoch(
     post_pred = AsDiscrete(argmax=True, to_onehot=NUM_CLASSES)
     post_label = AsDiscrete(to_onehot=NUM_CLASSES)
     dice_metric = DiceMetric(include_background=True, reduction="none", num_classes=NUM_CLASSES)
+    n_seen = 0
+    n_used = 0
+    n_skipped = 0
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(loader):
+            n_seen += 1
             if batch_idx == 0:
                 image_shape = tuple(batch["image"].shape)
                 label_shape = tuple(batch["label"].shape)
@@ -233,6 +237,20 @@ def validate_epoch(
                     )
             images = batch["image"].to(device)
             labels = batch["label"].to(device).long()
+            gt_hist = torch.bincount(labels.long().flatten(), minlength=NUM_CLASSES).detach().cpu().tolist()
+            gt_max = labels.max().item()
+            if gt_max == 0 or sum(gt_hist[1:]) == 0:
+                meta = batch.get("image_meta_dict") or batch.get("label_meta_dict") or batch.get("image_meta") or batch.get("label_meta")
+                if isinstance(meta, list):
+                    meta = meta[0] if meta else None
+                filename = meta.get("filename_or_obj") if isinstance(meta, dict) else None
+                if filename is None and isinstance(meta, dict):
+                    filename = meta.get("filename")
+                case_id = str(filename) if filename is not None else f"batch{batch_idx}"
+                label_shape = tuple(labels.shape)
+                print(f"[VAL SKIP] case={case_id} reason=all_zero_gt gt_hist={gt_hist} label_shape={label_shape}")
+                n_skipped += 1
+                continue
             logits = sliding_window_inference(images, roi_size=roi_size, sw_batch_size=1, predictor=model)
             probs = torch.softmax(logits, dim=1)
 
@@ -240,11 +258,11 @@ def validate_epoch(
             preds = [post_pred(i) for i in decollate_batch(probs)]
             labels_list = [post_label(i) for i in decollate_batch(labels)]
             dice_metric(y_pred=preds, y=labels_list)
+            n_used += 1
 
             if batch_idx < 2:
                 gt_unique = torch.unique(labels)
                 pred_unique = torch.unique(torch.argmax(probs, dim=1))
-                gt_hist = torch.bincount(labels.long().flatten(), minlength=NUM_CLASSES).cpu().tolist()
                 print(
                     f"[VAL DEBUG] batch={batch_idx} gt_unique={gt_unique.tolist()} pred_unique={pred_unique.tolist()} "
                     f"gt_hist={gt_hist}"
@@ -252,6 +270,9 @@ def validate_epoch(
 
             del preds, labels_list, logits, images, labels
 
+    print(f"[VAL SUMMARY] used={n_used} skipped={n_skipped} seen={n_seen}")
+    if n_used == 0:
+        raise RuntimeError("No labeled validation cases found after filtering all-zero GT volumes.")
     mean_dice_all, mean_dice_per_class, mean_fg_dice = compute_metrics(dice_metric, NUM_CLASSES)
     return mean_dice_all, mean_dice_per_class, mean_fg_dice
 
