@@ -357,8 +357,6 @@ def create_hvsmr_loaders(
             Orientationd(keys=["image", "label"], axcodes="RAS"),
             # MRI intensity normalization: z-score on non-zero voxels, channel-wise.
             NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
-            SpatialPadd(keys=["image", "label"], spatial_size=roi_size, mode=("reflect", "constant")),
-            ResizeWithPadOrCropd(keys=["image", "label"], spatial_size=roi_size),
             EnsureTyped(keys=["image", "label"]),
         ]
     )
