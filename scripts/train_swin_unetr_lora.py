@@ -4,13 +4,18 @@ Train Swin-UNETR with LoRA adapters on attention Q/V projections.
 Defaults freeze the backbone so only LoRA params (and any unfrozen heads) train.
 """
 import argparse
+import json
 import math
+import socket
+import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
 import numpy as np
 import torch
+import monai
 from monai.data import decollate_batch
 from monai.inferers import sliding_window_inference
 from monai.losses import DiceCELoss
@@ -41,6 +46,64 @@ from models.lora_utils import (  # noqa: E402
     log_model_params,
     summarize_lora_modules,
 )
+
+
+def dump_run_config(args, output_dir: Path, extra: dict | None = None) -> None:
+    def _format_lines(data: dict, indent: int = 0) -> list[str]:
+        lines = []
+        pad = "  " * indent
+        for key in sorted(data):
+            val = data[key]
+            if isinstance(val, dict):
+                lines.append(f"{pad}{key}:")
+                lines.extend(_format_lines(val, indent + 1))
+            else:
+                lines.append(f"{pad}{key}: {val}")
+        return lines
+
+    try:
+        git_info = {"commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=str(ROOT_DIR), text=True).strip(), "branch": subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(ROOT_DIR), text=True).strip(), "status": subprocess.check_output(["git", "status", "--porcelain"], cwd=str(ROOT_DIR), text=True).strip()}
+    except Exception as exc:
+        git_info = {"error": str(exc)}
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    label_root_used = args.label_root if args.label_root else Path(args.data_root) / "labelsTr"
+    cuda_devices = [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())] if torch.cuda.is_available() else []
+    rare_classes = sorted({int(x) for x in str(args.rare_classes).split(",") if x.strip()})
+    args_dict = {k: (str(v) if isinstance(v, Path) else v.item() if isinstance(v, (np.integer, np.floating)) else v) for k, v in vars(args).items()}
+
+    config = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "args": args_dict,
+        "run": {"output_dir": str(output_dir)},
+        "git": git_info,
+        "system": {
+            "python_version": sys.version.split()[0],
+            "torch_version": torch.__version__,
+            "monai_version": monai.__version__,
+            "cuda_available": torch.cuda.is_available(),
+            "cuda_devices": cuda_devices,
+            "hostname": socket.gethostname(),
+        },
+        "data": {"data_root": str(args.data_root), "label_root": str(label_root_used) if label_root_used is not None else None, "train_split": str(args.train_split), "val_split": str(args.val_split)},
+        "training": {"max_epochs": args.epochs, "patience": args.patience, "batch_size": args.batch_size, "roi_size": tuple(args.roi_size), "num_workers": args.num_workers, "seed": args.seed, "determinism": True},
+        "optimizer": {"name": "AdamW", "single_group": {"lr": args.lr_max, "weight_decay": args.weight_decay}, "lr_lora": args.lr_lora, "lr_backbone": args.lr_backbone, "wd_lora": args.wd_lora, "wd_backbone": args.wd_backbone, "groupA": {"lr": args.lr_lora, "weight_decay": args.wd_lora}, "groupB": {"lr": args.lr_backbone, "weight_decay": args.wd_backbone}, "freeze_backbone": args.freeze_backbone, "lora_rank": args.lora_rank, "lora_alpha": args.lora_alpha},
+        "scheduler": {"type": args.sched, "warmup_epochs": args.warmup_epochs, "poly_power": args.poly_power, "decay_to_zero": True, "lr_min": 0.0},
+        "loss": {"rare_classes": rare_classes, "rare_dice_w": args.rare_dice_w},
+        "model": {"num_classes": NUM_CLASSES},
+    }
+    if extra:
+        config.update(extra)
+
+    json_path = output_dir / "run_config.json"
+    txt_path = output_dir / "run_config.txt"
+    with json_path.open("w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, sort_keys=True)
+    lines = _format_lines(config)
+    txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("[RUN CONFIG]")
+    for line in lines:
+        print(line)
 
 
 def train_epoch(
@@ -202,10 +265,13 @@ def main():
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--grad_accum", type=int, default=1, help="Accumulate gradients for N steps before optimizer.step().")
-    parser.add_argument("--lr", "--lr_max", dest="lr_max", type=float, default=2e-4, help="Initial / max learning rate.")
-    parser.add_argument("--lr_min", type=float, default=2e-5, help="Final learning rate at the end of training.")
-    parser.add_argument("--warmup_epochs", type=int, default=5, help="Linear warmup epochs before cosine decay.")
-    parser.add_argument("--weight_decay", type=float, default=1e-2)
+    parser.add_argument("--lr_lora", type=float, default=5e-4, help="Learning rate for LoRA/decoder/head params.")
+    parser.add_argument("--lr_backbone", type=float, default=1e-5, help="Learning rate for backbone params.")
+    parser.add_argument("--wd_lora", type=float, default=1e-2, help="Weight decay for LoRA/decoder/head params.")
+    parser.add_argument("--wd_backbone", type=float, default=1e-4, help="Weight decay for backbone params.")
+    parser.add_argument("--warmup_epochs", type=int, default=5, help="Linear warmup epochs before decay.")
+    parser.add_argument("--sched", choices=("cosine", "poly"), default="cosine", help="LR decay schedule after warmup.")
+    parser.add_argument("--poly_power", type=float, default=1.0, help="Polynomial power for poly decay (sched=poly).")
     parser.add_argument("--output_dir", type=Path, required=True, help="Directory for checkpoints/logs.")
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
@@ -230,7 +296,13 @@ def main():
         default="7,8",
         help="Comma-separated list of rare class indices to regularize (e.g., '7,8').",
     )
+    parser.add_argument("--lr", "--lr_max", dest="lr_max", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--lr_min", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--weight_decay", type=float, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.lr_max is not None or args.lr_min is not None or args.weight_decay is not None:
+        print("[WARN] Deprecated --lr/--lr_max/--lr_min/--weight_decay ignored; use --lr_lora/--lr_backbone/--wd_lora/--wd_backbone.")
 
     print("Training Swin-UNETR with LoRA adapters (Q/V).")
     set_seed(args.seed)
@@ -242,6 +314,7 @@ def main():
 
     rare_classes = sorted({int(x) for x in args.rare_classes.split(",") if x.strip()})
     print(f"Rare-class Dice regularizer -> classes={rare_classes}, weight={args.rare_dice_w}")
+    dump_run_config(args, args.output_dir)
 
     # The train/val splits are read from the same txt files used by nnU-Net, so Swin-UNETR sees the same images as nnU-Net for a fair comparison.
     train_loader, val_loader = create_hvsmr_loaders(
@@ -286,7 +359,9 @@ def main():
     lora_param_count = sum(p.numel() for p in lora_params)
     print(
         f"Mode: lora (rank={args.lora_rank}, alpha={args.lora_alpha}) | Optimizer: AdamW | "
-        f"lr range: {args.lr_max:.3e} -> {args.lr_min:.3e} | weight_decay: {args.weight_decay:.3e} | "
+        f"lr_lora: {args.lr_lora:.3e} | lr_backbone: {args.lr_backbone:.3e} | "
+        f"wd_lora: {args.wd_lora:.3e} | wd_backbone: {args.wd_backbone:.3e} | "
+        f"sched: {args.sched} | warmup_epochs: {args.warmup_epochs} | poly_power: {args.poly_power:.2f} | "
         f"batch_size: {args.batch_size} | roi_size: {roi_size} | max_epochs: {args.epochs} | "
         f"early_stopping_patience: {args.patience} | freeze_backbone: {args.freeze_backbone}"
     )
@@ -308,21 +383,81 @@ def main():
         include_background=True,
         weight=ce_weights,
     )
-    trainable_params_for_optim = [p for p in model.parameters() if p.requires_grad]
-    opt_param_count = sum(p.numel() for p in trainable_params_for_optim)
-    print(f"Optimizer will update {opt_param_count:,} parameters (matches trainable count above).")
-    optimizer = torch.optim.AdamW(trainable_params_for_optim, lr=args.lr_max, weight_decay=args.weight_decay)
+    group_a_params: list[torch.nn.Parameter] = []
+    group_b_params: list[torch.nn.Parameter] = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if name.startswith("swinViT"):
+            group_b_params.append(param)
+        else:
+            group_a_params.append(param)
+    group_a_count = sum(p.numel() for p in group_a_params)
+    group_b_count = sum(p.numel() for p in group_b_params)
+    trainable_count = group_a_count + group_b_count
+    print(
+        "Optimizer parameter groups -> "
+        f"trainable_total={trainable_count:,} | groupA(non-backbone)={group_a_count:,} | groupB(backbone)={group_b_count:,}"
+    )
+    if trainable_count != trainable_params:
+        print(f"[WARN] Trainable param mismatch: count_parameters={trainable_params:,} vs grouped={trainable_count:,}.")
+    print(
+        "Group hyperparams -> "
+        f"groupA lr={args.lr_lora:.3e}, wd={args.wd_lora:.3e} | "
+        f"groupB lr={args.lr_backbone:.3e}, wd={args.wd_backbone:.3e}"
+    )
+    if not group_b_params:
+        print("Backbone frozen -> groupB is empty; no backbone params will be optimized.")
 
-    def lr_lambda(epoch: int) -> float:
+    optim_groups = [{"params": group_a_params, "lr": args.lr_lora, "weight_decay": args.wd_lora}]
+    if group_b_params:
+        optim_groups.append({"params": group_b_params, "lr": args.lr_backbone, "weight_decay": args.wd_backbone})
+    optimizer = torch.optim.AdamW(optim_groups)
+    group_a_lr = optimizer.param_groups[0]["lr"]
+    group_a_wd = optimizer.param_groups[0].get("weight_decay", 0.0)
+    group_b_lr = None
+    group_b_wd = None
+    if len(optimizer.param_groups) > 1:
+        group_b_lr = optimizer.param_groups[1]["lr"]
+        group_b_wd = optimizer.param_groups[1].get("weight_decay", 0.0)
+    run_config_extra = {
+        "model": {"num_classes": NUM_CLASSES, "total_params": total_params, "trainable_params": trainable_params, "lora_params": lora_param_count},
+        "optimizer": {
+            "name": "AdamW",
+            "single_group": {"lr": args.lr_max, "weight_decay": args.weight_decay},
+            "lr_lora": args.lr_lora,
+            "lr_backbone": args.lr_backbone,
+            "wd_lora": args.wd_lora,
+            "wd_backbone": args.wd_backbone,
+            "groupA": {"num_params": len(group_a_params), "numel": group_a_count, "lr": group_a_lr, "weight_decay": group_a_wd},
+            "groupB": {"num_params": len(group_b_params), "numel": group_b_count, "present": bool(group_b_params), "lr": group_b_lr, "weight_decay": group_b_wd},
+            "freeze_backbone": args.freeze_backbone,
+            "lora_rank": args.lora_rank,
+            "lora_alpha": args.lora_alpha,
+            "trainable_total_numel": trainable_count,
+        },
+        "loss": {"ce_weights": ce_weights.detach().cpu().tolist(), "rare_classes": rare_classes, "rare_dice_w": args.rare_dice_w},
+    }
+    dump_run_config(args, args.output_dir, extra=run_config_extra)
+
+    def lr_scale(epoch: int) -> float:
         if args.warmup_epochs > 0 and epoch < args.warmup_epochs:
             return float(epoch + 1) / float(args.warmup_epochs)
-        progress = (epoch - args.warmup_epochs) / max(1, args.epochs - args.warmup_epochs)
-        cosine = 0.5 * (1 + math.cos(math.pi * min(1.0, progress)))
-        min_scale = args.lr_min / args.lr_max
-        return min_scale + (1 - min_scale) * cosine
+        decay_epochs = args.epochs - args.warmup_epochs
+        if decay_epochs <= 1:
+            progress = 1.0
+        else:
+            progress = (epoch - args.warmup_epochs) / (decay_epochs - 1)
+        progress = min(max(progress, 0.0), 1.0)
+        if args.sched == "cosine":
+            return 0.5 * (1 + math.cos(math.pi * progress))
+        return (1 - progress) ** args.poly_power
 
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
-    print(f"LR preview (first 4 epochs): {[f'{args.lr_max * lr_lambda(e):.3e}' for e in range(4)]}")
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=[lr_scale] * len(optimizer.param_groups))
+    preview_scales = [lr_scale(e) for e in range(4)]
+    preview_lora = [f"{args.lr_lora * s:.3e}" for s in preview_scales]
+    preview_backbone = [f"{args.lr_backbone * s:.3e}" for s in preview_scales]
+    print(f"LR preview (first 4 epochs): groupA={preview_lora} | groupB={preview_backbone}")
 
     best_dice = -1.0
     epochs_no_improve = 0
@@ -342,9 +477,9 @@ def main():
     for epoch in range(args.epochs):
         print(f"Epoch {epoch + 1}/{args.epochs}")
         scheduler.step(epoch)
-        current_lr = scheduler.get_last_lr()[0]
-        for param_group in optimizer.param_groups:
-            param_group["lr"] = current_lr
+        current_lrs = scheduler.get_last_lr()
+        lr_group_a = current_lrs[0] if current_lrs else 0.0
+        lr_group_b = current_lrs[1] if len(current_lrs) > 1 else 0.0
         train_loss = train_epoch(
             model,
             train_loader,
@@ -359,7 +494,7 @@ def main():
             max_train_batches=args.max_train_batches,
         )
         print(f"  Mean train loss: {train_loss:.4f}")
-        print(f"  Learning rate: {current_lr:.3e}")
+        print(f"  Learning rates: groupA={lr_group_a:.3e} | groupB={lr_group_b:.3e}")
 
         val_mean_all, val_per_class_mean, val_mean_fg = validate_epoch(model, val_loader, device, roi_size)
         per_class_str = ", ".join(f"{i}:{float(v):.3f}" for i, v in enumerate(val_per_class_mean))
