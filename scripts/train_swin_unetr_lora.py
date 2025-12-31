@@ -149,6 +149,25 @@ def validate_epoch(
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(loader):
+            if batch_idx == 0:
+                image_shape = tuple(batch["image"].shape)
+                label_shape = tuple(batch["label"].shape)
+                print(f"[VAL DEBUG] batch=0 image_shape={image_shape} label_shape={label_shape}")
+                roi_size_tuple = tuple(int(x) for x in roi_size)
+                label_spatial = label_shape[2:]
+                label_meta = batch.get("label_meta_dict") or batch.get("label_meta")
+                if isinstance(label_meta, list):
+                    label_meta = label_meta[0] if label_meta else None
+                orig_shape = None
+                if isinstance(label_meta, dict):
+                    orig_shape = label_meta.get("original_shape") or label_meta.get("spatial_shape")
+                    if orig_shape is not None:
+                        orig_shape = tuple(int(x) for x in orig_shape)
+                if label_spatial == roi_size_tuple and (orig_shape is None or orig_shape != roi_size_tuple):
+                    raise AssertionError(
+                        "Validation labels appear cropped to roi_size; "
+                        f"label_spatial={label_spatial}, roi_size={roi_size_tuple}, original_shape={orig_shape}"
+                    )
             images = batch["image"].to(device)
             labels = batch["label"].to(device).long()
             logits = sliding_window_inference(images, roi_size=roi_size, sw_batch_size=1, predictor=model)
