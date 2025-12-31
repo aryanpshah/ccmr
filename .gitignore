@@ -53,3 +53,8 @@ debug_pred_*.nii.gz
 data/splits/*subset*.txt
 *.exe
 echo
+
+# Local data artifacts
+/data/processed/
+/data/splits/_tmp_*
+/data/splits/overfit_one*.txt
