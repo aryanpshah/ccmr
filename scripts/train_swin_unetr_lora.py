@@ -41,7 +41,6 @@ from training_utils import compute_metrics, load_checkpoint  # noqa: E402
 from models.lora_utils import (  # noqa: E402
     add_lora_to_swin_unetr,
     count_parameters,
-    freeze_backbone_enable_lora_and_decoder,
     get_lora_params,
     log_model_params,
     summarize_lora_modules,
@@ -157,28 +156,29 @@ def train_epoch(
         if epoch == 0 and step == 0:
             lora_grad_norm = 0.0
             decoder_head_grad_norm = 0.0
-            frozen_grad_norm = 0.0
-            frozen_with_grads: list[str] = []
+            backbone_grad_norm = 0.0
+            frozen_backbone_with_grads: list[str] = []
             for name, param in model.named_parameters():
                 grad = param.grad
                 if grad is None:
                     continue
                 grad_norm = grad.norm().item()
-                name_lower = name.lower()
-                if "lora" in name_lower and param.requires_grad:
+                is_lora_param = getattr(param, "_is_lora_param", False)
+                if is_lora_param and param.requires_grad:
                     lora_grad_norm += grad_norm
-                elif not name.startswith("swinViT") and "lora" not in name_lower:
+                elif name.startswith("swinViT") and not is_lora_param:
+                    backbone_grad_norm += grad_norm
+                    if not param.requires_grad:
+                        frozen_backbone_with_grads.append(name)
+                elif not name.startswith("swinViT") and not is_lora_param:
                     decoder_head_grad_norm += grad_norm
-                elif name.startswith("swinViT") and not param.requires_grad:
-                    frozen_grad_norm += grad_norm
-                    frozen_with_grads.append(name)
             print(
-                f"[DEBUG GRADS] lora_grad_norm={lora_grad_norm:.4e}, decoder_head_grad_norm={decoder_head_grad_norm:.4e}, frozen_grad_norm={frozen_grad_norm:.4e}"
+                f"[DEBUG GRADS] lora_grad_norm={lora_grad_norm:.4e}, decoder_head_grad_norm={decoder_head_grad_norm:.4e}, backbone_grad_norm={backbone_grad_norm:.4e}"
             )
-            if frozen_grad_norm > 1e-8:
-                print(f"  [WARN] Frozen parameters show non-zero gradients; clearing: {frozen_with_grads}")
+            if frozen_backbone_with_grads:
+                print(f"  [WARN] Frozen backbone parameters show non-zero gradients; clearing: {frozen_backbone_with_grads}")
                 for name, param in model.named_parameters():
-                    if name in frozen_with_grads:
+                    if name in frozen_backbone_with_grads:
                         param.grad = None
         if (step + 1) % grad_accum == 0:
             optimizer.step()
@@ -301,8 +301,8 @@ def main():
     parser.add_argument("--patience", type=int, default=60, help="Early stopping patience (validation epochs).")
     parser.add_argument("--lora_rank", type=int, default=4)
     parser.add_argument("--lora_alpha", type=float, default=1.0)
-    parser.add_argument("--freeze_backbone", dest="freeze_backbone", action="store_true", default=True)
-    parser.add_argument("--no_freeze_backbone", dest="freeze_backbone", action="store_false", help="Train full backbone along with LoRA.")
+    parser.add_argument("--freeze_backbone", action="store_true", default=True, help="Freeze backbone parameters (default).")
+    parser.add_argument("--no_freeze_backbone", action="store_true", default=False, help="Train full backbone along with LoRA.")
     parser.add_argument(
         "--max_train_batches",
         type=int,
@@ -321,6 +321,10 @@ def main():
     parser.add_argument("--lr_min", type=float, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--weight_decay", type=float, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    do_freeze_backbone = args.freeze_backbone and not args.no_freeze_backbone
+    if args.lora_rank <= 0:
+        do_freeze_backbone = False
+    args.freeze_backbone = do_freeze_backbone
 
     if args.lr_max is not None or args.lr_min is not None or args.weight_decay is not None:
         print("[WARN] Deprecated --lr/--lr_max/--lr_min/--weight_decay ignored; use --lr_lora/--lr_backbone/--wd_lora/--wd_backbone.")
@@ -361,23 +365,62 @@ def main():
             model,
             lora_rank=args.lora_rank,
             lora_alpha=args.lora_alpha,
-            freeze_backbone=args.freeze_backbone,
+            freeze_backbone=False,
         )
         summarize_lora_modules(model)
     else:
         # lora_rank == 0: train as usual
+        do_freeze_backbone = False
         args.freeze_backbone = False
 
-    if args.freeze_backbone:
-        counts = freeze_backbone_enable_lora_and_decoder(model)
+    backbone_params: list[torch.nn.Parameter] = []
+    decoder_head_params: list[torch.nn.Parameter] = []
+    lora_param_list: list[torch.nn.Parameter] = []
+    for name, param in model.named_parameters():
+        is_lora_param = getattr(param, "_is_lora_param", False)
+        if name.startswith("swinViT") and not is_lora_param:
+            backbone_params.append(param)
+        root = name.split(".")[0]
+        if root.startswith("decoder") or root.startswith("out"):
+            decoder_head_params.append(param)
+        if is_lora_param:
+            lora_param_list.append(param)
+
+    for param in backbone_params:
+        param.requires_grad = not do_freeze_backbone
+    for param in decoder_head_params:
+        param.requires_grad = True
+    for param in lora_param_list:
+        param.requires_grad = True
+
+    if do_freeze_backbone:
+        counts = {"lora": 0, "decoder": 0, "head": 0, "other": 0}
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            root = name.split(".")[0]
+            if getattr(param, "_is_lora_param", False):
+                counts["lora"] += param.numel()
+            elif root.startswith("decoder"):
+                counts["decoder"] += param.numel()
+            elif root.startswith("out"):
+                counts["head"] += param.numel()
+            else:
+                counts["other"] += param.numel()
         print(
             "Trainable parameter groups -> "
-            f"LoRA: {counts['lora']:,} | Decoder: {counts['decoder']:,} | Head: {counts['head']:,} | Other (still frozen): {counts['other']:,}"
+            f"LoRA: {counts['lora']:,} | Decoder: {counts['decoder']:,} | Head: {counts['head']:,} | Other trainable: {counts['other']:,}"
         )
+
+    if args.no_freeze_backbone:
+        assert any(p.requires_grad for p in backbone_params), "Expected at least one trainable backbone parameter with --no_freeze_backbone."
+    if args.freeze_backbone and not args.no_freeze_backbone:
+        assert all(not p.requires_grad for p in backbone_params), "Expected all backbone parameters frozen with --freeze_backbone."
 
     total_params, trainable_params = count_parameters(model)
     lora_params = get_lora_params(model)
     lora_param_count = sum(p.numel() for p in lora_params)
+    print(f"Params summary -> total={total_params:,} | trainable={trainable_params:,}")
     print(
         f"Mode: lora (rank={args.lora_rank}, alpha={args.lora_alpha}) | Optimizer: AdamW | "
         f"lr_lora: {args.lr_lora:.3e} | lr_backbone: {args.lr_backbone:.3e} | "
@@ -409,16 +452,21 @@ def main():
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        if name.startswith("swinViT"):
-            group_b_params.append(param)
-        else:
+        is_lora_param = getattr(param, "_is_lora_param", False)
+        if is_lora_param or not name.startswith("swinViT"):
             group_a_params.append(param)
+        else:
+            group_b_params.append(param)
     group_a_count = sum(p.numel() for p in group_a_params)
     group_b_count = sum(p.numel() for p in group_b_params)
     trainable_count = group_a_count + group_b_count
+    group_a_tensors = len(group_a_params)
+    group_b_tensors = len(group_b_params)
     print(
         "Optimizer parameter groups -> "
-        f"trainable_total={trainable_count:,} | groupA(non-backbone)={group_a_count:,} | groupB(backbone)={group_b_count:,}"
+        f"trainable_total={trainable_count:,} | "
+        f"groupA(lora/non-backbone)={group_a_count:,} ({group_a_tensors} tensors) | "
+        f"groupB(backbone)={group_b_count:,} ({group_b_tensors} tensors)"
     )
     if trainable_count != trainable_params:
         print(f"[WARN] Trainable param mismatch: count_parameters={trainable_params:,} vs grouped={trainable_count:,}.")
