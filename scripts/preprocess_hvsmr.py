@@ -6,6 +6,7 @@ spacing, cropping/padding to 192^3, and exporting standardized split files.
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 from collections import Counter
@@ -113,10 +114,12 @@ def resample_to_spacing(
     volume: np.ndarray,
     current_spacing: Sequence[float],
     target_spacing: Sequence[float],
+    *,
+    order: int = 3,
 ) -> np.ndarray:
     """Resample `volume` from current spacing to target spacing."""
     zoom_factors = tuple(cs / ts for cs, ts in zip(current_spacing, target_spacing))
-    return ndimage.zoom(volume, zoom=zoom_factors, order=3)
+    return ndimage.zoom(volume, zoom=zoom_factors, order=order)
 
 
 def center_crop_or_pad(volume: np.ndarray, target_shape: Tuple[int, int, int]) -> np.ndarray:
@@ -151,6 +154,70 @@ def process_case(case: CaseRecord) -> np.ndarray:
     resampled = resample_to_spacing(volume, current_spacing, TARGET_SPACING)
     processed = center_crop_or_pad(resampled, TARGET_SHAPE)
     return processed
+
+
+def discover_label_cases(raw_label_dir: str) -> Dict[str, str]:
+    """Return map of case_id -> label path."""
+    if not os.path.isdir(raw_label_dir):
+        raise FileNotFoundError(f"Label directory not found: {raw_label_dir}")
+    cases: Dict[str, str] = {}
+    for root, _, files in os.walk(raw_label_dir):
+        for fname in files:
+            if not fname.lower().endswith((".nii", ".nii.gz")):
+                continue
+            path = os.path.join(root, fname)
+            _, case_id = extract_case_info(path)
+            if case_id in cases:
+                continue
+            cases[case_id] = os.path.abspath(path)
+    if not cases:
+        raise RuntimeError(f"No label NIfTI files found under {raw_label_dir}")
+    return cases
+
+
+def process_label(
+    label_path: str,
+    target_spacing: Sequence[float],
+    target_shape: Tuple[int, int, int],
+) -> np.ndarray:
+    """Load label, reorient to RAS, resample, and crop/pad to target grid."""
+    img = nib.as_closest_canonical(nib.load(label_path))
+    data = np.asarray(img.dataobj)
+    volume = np.transpose(data, (2, 1, 0))  # (z, y, x)
+    zooms = img.header.get_zooms()[:3]
+    current_spacing = (zooms[2], zooms[1], zooms[0])
+    resampled = resample_to_spacing(volume, current_spacing, target_spacing, order=0)
+    processed = center_crop_or_pad(resampled, target_shape)
+    processed = np.rint(processed)
+    max_val = processed.max() if processed.size else 0
+    dtype = np.uint8 if max_val <= np.iinfo(np.uint8).max else np.int16
+    return processed.astype(dtype)
+
+
+def generate_matched_labels(
+    raw_label_dir: str,
+    out_label_dir: str,
+    case_ids: Sequence[str] | None,
+    target_shape: Tuple[int, int, int],
+    target_spacing: Tuple[float, float, float],
+) -> None:
+    label_map = discover_label_cases(raw_label_dir)
+    if case_ids:
+        requested = set(case_ids)
+        missing = sorted(requested - set(label_map))
+        if missing:
+            raise ValueError(f"Requested case_ids missing in {raw_label_dir}: {', '.join(missing)}")
+        label_map = {cid: label_map[cid] for cid in label_map if cid in requested}
+
+    os.makedirs(out_label_dir, exist_ok=True)
+    sorted_cases = sorted(label_map.items(), key=lambda kv: extract_case_info(kv[1])[0])
+    for case_id, label_path in sorted_cases:
+        processed = process_label(label_path, target_spacing, target_shape)
+        out_path = os.path.join(out_label_dir, f"{case_id}_label.nii.gz")
+        save_nifti(processed, out_path)
+        uniques = np.unique(processed).tolist()
+        nonzero = int(np.count_nonzero(processed))
+        print(f"[MATCHED LABEL] {case_id} unique={uniques} nonzero_voxels={nonzero}")
 
 
 def save_nifti(volume_zyx: np.ndarray, out_path: str) -> None:
@@ -249,6 +316,60 @@ def log_severity_counts(label: str, case_ids: Sequence[str], severity_lookup: Di
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Preprocess HVSMR-2.0 volumes and splits.")
+    parser.add_argument(
+        "--raw_label_dir",
+        type=str,
+        default="./data/processed/hvsmr2/labelsTr",
+        help="Directory containing original labels with real affine.",
+    )
+    parser.add_argument(
+        "--out_label_dir",
+        type=str,
+        default="./data/processed/hvsmr2/labelsTr_matched",
+        help="Directory to write matched labels aligned to processed images.",
+    )
+    parser.add_argument(
+        "--case_ids",
+        type=str,
+        default=None,
+        help='Comma-separated case IDs to process (e.g., "pat46,pat14").',
+    )
+    parser.add_argument(
+        "--target_shape",
+        type=int,
+        nargs=3,
+        default=TARGET_SHAPE,
+        metavar=("Z", "Y", "X"),
+        help="Target (z, y, x) shape for labels.",
+    )
+    parser.add_argument(
+        "--target_spacing",
+        type=float,
+        nargs=3,
+        default=TARGET_SPACING,
+        metavar=("Z", "Y", "X"),
+        help="Target (z, y, x) spacing for labels.",
+    )
+    parser.add_argument(
+        "--make_matched_labels",
+        action="store_true",
+        help="Generate matched labels aligned to processed images.",
+    )
+    args = parser.parse_args()
+
+    if args.make_matched_labels:
+        case_ids = [cid.strip() for cid in args.case_ids.split(",") if cid.strip()] if args.case_ids else None
+        target_shape = tuple(int(x) for x in args.target_shape)
+        target_spacing = tuple(float(x) for x in args.target_spacing)
+        generate_matched_labels(
+            args.raw_label_dir,
+            args.out_label_dir,
+            case_ids,
+            target_shape,
+            target_spacing,
+        )
+
     severity_map = load_severity_map(CLINICAL_CSV)
     cases = discover_cases(RAW_ROOT, severity_map)
     case_ids = [case.case_id for case in cases]
