@@ -77,6 +77,66 @@ DEFAULT_PRETRAINED_URL = (
 )
 
 
+def _to_numpy(data):
+    if torch.is_tensor(data):
+        return data.detach().cpu().numpy()
+    if isinstance(data, np.ndarray):
+        return data
+    return np.asarray(data)
+
+
+class _DebugLabelStatsd:
+    def __init__(self, label_key: str, num_classes: int, tag: str, max_prints: int = 4) -> None:
+        self.label_key = label_key
+        self.num_classes = num_classes
+        self.tag = tag
+        self.max_prints = max_prints
+        self._seen = 0
+
+    def __call__(self, data):
+        if isinstance(data, (list, tuple)):
+            return [self._maybe_log(sample) for sample in data]
+        return self._maybe_log(data)
+
+    def _maybe_log(self, sample):
+        if self._seen >= self.max_prints:
+            return sample
+        self._seen += 1
+        if not isinstance(sample, dict):
+            print(f"[DBG {self.tag}] Unexpected sample type={type(sample)}")
+            return sample
+        keys = sorted(sample.keys())
+        if self.label_key not in sample:
+            print(f"[DBG {self.tag}] label_key={self.label_key} missing keys={keys}")
+            return sample
+
+        label = sample[self.label_key]
+        label_np = _to_numpy(label)
+        shape = tuple(label_np.shape)
+        dtype = str(label_np.dtype)
+        unique_vals = np.unique(label_np)
+        unique_list = unique_vals[:30].tolist()
+
+        channels = label_np.shape[0] if label_np.ndim >= 4 else 1
+        fg_vox = int(np.sum(label_np > 0))
+        class_counts: Dict[int, int] = {}
+        if channels > 1:
+            for c in range(self.num_classes):
+                if c < channels:
+                    class_counts[c] = int(np.sum(label_np[c] > 0))
+                else:
+                    class_counts[c] = 0
+        else:
+            for c in range(self.num_classes):
+                class_counts[c] = int(np.sum(label_np == c))
+
+        print(
+            f"[DBG {self.tag}] keys={keys} label_key={self.label_key} shape={shape} "
+            f"dtype={dtype} unique={unique_list} fg_vox={fg_vox} hist={class_counts}"
+        )
+        return sample
+
+
 def set_seed(seed: int) -> None:
     """Set seeds for reproducibility."""
     random.seed(seed)
@@ -300,6 +360,8 @@ def create_hvsmr_loaders(
     val_dicts = build_dataset_dicts(data_root, val_ids, label_root=label_root)
 
     spatial_keys = ["image", "label"]
+    label_key = "label"
+    hvsmr_num_classes = 9
     split_tokens = Path(train_split_file).stem.replace("-", "_").upper().split("_")
     is_l5_split = "L5" in split_tokens
     if is_l5_split:
@@ -317,23 +379,31 @@ def create_hvsmr_loaders(
     )
     rand_crop_samples = 8 if overfit_debug else 2
     crop_num_samples = 1 if overfit_debug else rand_crop_samples
+    crop_ratios = [0.05, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.25, 0.25]
+    if len(crop_ratios) != hvsmr_num_classes:
+        raise ValueError(
+            f"Crop ratios length {len(crop_ratios)} must match hvsmr_num_classes={hvsmr_num_classes}."
+        )
 
     train_ops = [
         LoadImaged(keys=spatial_keys),
         ChannelFirstd(keys=spatial_keys),
         Spacingd(keys=spatial_keys, pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
         Orientationd(keys=spatial_keys, axcodes="RAS"),
+        EnsureTyped(keys=[label_key], dtype=torch.int16),
         # MRI intensity normalization: z-score on non-zero voxels, channel-wise.
         NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
         SpatialPadd(keys=spatial_keys, spatial_size=roi_size, mode=("reflect", "constant")),
+        _DebugLabelStatsd(label_key=label_key, num_classes=hvsmr_num_classes, tag="pre-crop", max_prints=4),
         RandCropByLabelClassesd(
             keys=spatial_keys,
-            label_key="label",
+            label_key=label_key,
             spatial_size=roi_size,
-            num_classes=NUM_CLASSES,
-            ratios=[0.05, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.25, 0.25],
+            num_classes=hvsmr_num_classes,
+            ratios=crop_ratios,
             num_samples=crop_num_samples,
         ),
+        _DebugLabelStatsd(label_key=label_key, num_classes=hvsmr_num_classes, tag="post-crop", max_prints=4),
         ResizeWithPadOrCropd(keys=spatial_keys, spatial_size=roi_size),
     ]
     if not overfit_debug:
@@ -370,11 +440,19 @@ def create_hvsmr_loaders(
     # Debug info
     print(f"Loaded {len(train_ds)} training cases and {len(val_ds)} validation cases.")
     first_batch = next(iter(train_loader))
-    images, lab = first_batch["image"], first_batch["label"]
+    if label_key not in first_batch:
+        raise RuntimeError(f"Missing '{label_key}' in first train batch keys={sorted(first_batch.keys())}")
+    images, lab = first_batch["image"], first_batch[label_key]
     print(f"First train batch shapes -> image: {tuple(images.shape)}, label: {tuple(lab.shape)}; roi_size={roi_size}")
     print(f"[DEBUG] effective_train_patches_per_step = {images.shape[0]}")
     print(f"Debug shapes after transforms: img={tuple(images.shape)}, lab={tuple(lab.shape)}")
     assert images.shape[2:] == lab.shape[2:], "Image and label spatial shapes must match"
+    fg_vox = int((lab > 0).sum().item()) if torch.is_tensor(lab) else int(np.sum(lab > 0))
+    if fg_vox == 0:
+        print(
+            "[WARN] First train batch has zero foreground voxels after cropping. "
+            "Check label_key/num_classes and label integrity."
+        )
 
     return train_loader, val_loader
 
