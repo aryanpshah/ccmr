@@ -379,7 +379,7 @@ def create_hvsmr_loaders(
     )
     rand_crop_samples = 8 if overfit_debug else 2
     crop_num_samples = 1 if overfit_debug else rand_crop_samples
-    crop_ratios = [0.05, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.25, 0.25]
+    crop_ratios = [0.0, 1, 1, 1, 1, 1, 1, 1, 1]  # background never selected
     if len(crop_ratios) != hvsmr_num_classes:
         raise ValueError(
             f"Crop ratios length {len(crop_ratios)} must match hvsmr_num_classes={hvsmr_num_classes}."
