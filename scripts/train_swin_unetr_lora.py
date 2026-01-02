@@ -437,14 +437,14 @@ def main():
         _ = model(dummy)
 
     ce_weights = torch.tensor(
-        [0.05, 0.2, 0.2, 0.2, 0.2, 1.0, 1.0, 1.2, 1.2],
+        [0.02, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
         dtype=torch.float32,
         device=device,
-    )  # modestly upweight rare classes (7-8) to stabilize CE
+    )  # low background weight for CE
     loss_function = DiceCELoss(
         to_onehot_y=True,
         softmax=True,
-        include_background=True,
+        include_background=False,
         weight=ce_weights,
     )
     group_a_params: list[torch.nn.Parameter] = []
@@ -574,12 +574,12 @@ def main():
         print(f"  Per-class mean Dice (1-8): [{per_class_fg_str}]")
 
         save_training_state(last_path, epoch=epoch, best_metric=best_dice)
-        if val_mean_all > best_dice:
+        if val_mean_fg > best_dice:
             prev_best = best_dice
-            best_dice = val_mean_all
+            best_dice = val_mean_fg
             epochs_no_improve = 0
             save_training_state(best_path, epoch=epoch, best_metric=best_dice)
-            print(f"  New best model saved to {best_path} (Dice={best_dice:.4f}, prev_best={prev_best:.4f})")
+            print(f"  New best model saved to {best_path} (FG Dice={best_dice:.4f}, prev_best={prev_best:.4f})")
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= args.patience:
