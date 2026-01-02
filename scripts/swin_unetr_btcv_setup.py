@@ -157,6 +157,7 @@ class _SafeRandCropByLabelClassesd(Randomizable):
         self._warned = False
         self._debug_max = debug_max_prints
         self._debug_seen = 0
+        self._fg_empty_seen = 0
         self.cropper_fg = RandCropByLabelClassesd(
             keys=keys,
             label_key=label_key,
@@ -227,6 +228,24 @@ class _SafeRandCropByLabelClassesd(Randomizable):
                     "falling back to background-only crop for this sample."
                 )
                 self._warned = True
+            if self._fg_empty_seen < self._debug_max:
+                self._fg_empty_seen += 1
+                image_path = data.get("image")
+                label_path = data.get("label")
+                case_id = data.get("case_id") or data.get("id")
+                print(
+                    "[CROP FALLBACK] reason=empty_foreground "
+                    f"image={image_path} label={label_path} case_id={case_id}"
+                )
+                if isinstance(label_path, (str, Path)) and Path(label_path).exists():
+                    try:
+                        lbl_img = nib.load(str(label_path))
+                        lbl_data = np.asarray(lbl_img.dataobj)
+                        uniq = np.unique(lbl_data)[:30].tolist()
+                        fg_sum = int(np.sum(lbl_data > 0))
+                        print(f"[CROP FALLBACK] on-disk label unique={uniq} fg_vox={fg_sum}")
+                    except Exception as exc:
+                        print(f"[CROP FALLBACK] label load failed: {exc}")
             return self.cropper_bg(data)
         if self.base_ratios is not None:
             effective_ratios = [float(r) for r in self.base_ratios]
