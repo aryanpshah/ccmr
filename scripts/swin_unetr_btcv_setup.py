@@ -39,6 +39,7 @@ from monai.transforms import (
     ResizeWithPadOrCropd,
     SpatialPadd,
 )
+from monai.transforms.transform import Randomizable
 from monai.utils import set_determinism
 from monai.data import CacheDataset
 import monai.transforms.transform as monai_transform_mod
@@ -135,6 +136,113 @@ class _DebugLabelStatsd:
             f"dtype={dtype} unique={unique_list} fg_vox={fg_vox} hist={class_counts}"
         )
         return sample
+
+
+class _SafeRandCropByLabelClassesd(Randomizable):
+    def __init__(
+        self,
+        keys,
+        label_key: str,
+        spatial_size,
+        num_classes: int,
+        ratios,
+        num_samples: int,
+        debug_max_prints: int = 4,
+        **kwargs,
+    ) -> None:
+        super().__init__()
+        self.label_key = label_key
+        self.num_classes = num_classes
+        self.base_ratios = list(ratios) if ratios is not None else None
+        self._warned = False
+        self._debug_max = debug_max_prints
+        self._debug_seen = 0
+        self.cropper_fg = RandCropByLabelClassesd(
+            keys=keys,
+            label_key=label_key,
+            spatial_size=spatial_size,
+            num_classes=num_classes,
+            ratios=ratios,
+            num_samples=num_samples,
+            **kwargs,
+        )
+        bg_ratios = [0.0] * num_classes
+        bg_ratios[0] = 1.0
+        self.cropper_bg = RandCropByLabelClassesd(
+            keys=keys,
+            label_key=label_key,
+            spatial_size=spatial_size,
+            num_classes=num_classes,
+            ratios=bg_ratios,
+            num_samples=num_samples,
+            **kwargs,
+        )
+
+    def set_random_state(self, seed: int | None = None, state: np.random.RandomState | None = None):
+        super().set_random_state(seed=seed, state=state)
+        max_seed = 2**32 - 1
+        self.cropper_fg.set_random_state(seed=int(self.R.randint(max_seed, dtype="uint32")))
+        self.cropper_bg.set_random_state(seed=int(self.R.randint(max_seed, dtype="uint32")))
+        return self
+
+    def __call__(self, data):
+        label = data.get(self.label_key)
+        if label is None:
+            return self.cropper_fg(data)
+        label_np = _to_numpy(label)
+        out_of_range = []
+        if label_np.ndim >= 4 and label_np.shape[0] > 1:
+            max_ch = min(label_np.shape[0], self.num_classes)
+            present_classes = [i for i in range(max_ch) if np.any(label_np[i] > 0)]
+            if label_np.shape[0] > self.num_classes:
+                out_of_range = list(range(self.num_classes, label_np.shape[0]))
+        else:
+            uniques = np.unique(label_np).astype(int).tolist()
+            present_classes = [c for c in uniques if 0 <= c < self.num_classes]
+            out_of_range = [c for c in uniques if c < 0 or c >= self.num_classes]
+        present_fg = [c for c in present_classes if c > 0]
+        if self._debug_seen < self._debug_max:
+            self._debug_seen += 1
+            effective = None
+            if self.base_ratios is not None:
+                effective = [float(r) for r in self.base_ratios]
+                for i in range(self.num_classes):
+                    if i not in present_classes:
+                        effective[i] = 0.0
+                total = float(np.sum(effective))
+                if total > 0:
+                    effective = [r / total for r in effective]
+            debug_line = (
+                f"[DBG crop] present_classes={present_classes} present_fg={present_fg} "
+                f"effective_ratios={effective}"
+            )
+            if out_of_range:
+                debug_line += f" out_of_range_labels={out_of_range}"
+            print(debug_line)
+
+        if not present_fg:
+            if not self._warned:
+                print(
+                    f"[WARN] No foreground voxels for label_key={self.label_key}; "
+                    "falling back to background-only crop for this sample."
+                )
+                self._warned = True
+            return self.cropper_bg(data)
+        if self.base_ratios is not None:
+            effective_ratios = [float(r) for r in self.base_ratios]
+            for i in range(self.num_classes):
+                if i not in present_classes:
+                    effective_ratios[i] = 0.0
+            total = float(np.sum(effective_ratios))
+            if total <= 0.0:
+                effective_ratios = [0.0] * self.num_classes
+                for c in present_fg:
+                    effective_ratios[c] = 1.0
+            if hasattr(self.cropper_fg, "ratios"):
+                self.cropper_fg.ratios = effective_ratios
+            if hasattr(self.cropper_fg, "cropper") and hasattr(self.cropper_fg.cropper, "ratios"):
+                self.cropper_fg.cropper.ratios = effective_ratios
+        return self.cropper_fg(data)
 
 
 def set_seed(seed: int) -> None:
@@ -395,7 +503,7 @@ def create_hvsmr_loaders(
         NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
         SpatialPadd(keys=spatial_keys, spatial_size=roi_size, mode=("reflect", "constant")),
         _DebugLabelStatsd(label_key=label_key, num_classes=hvsmr_num_classes, tag="pre-crop", max_prints=4),
-        RandCropByLabelClassesd(
+        _SafeRandCropByLabelClassesd(
             keys=spatial_keys,
             label_key=label_key,
             spatial_size=roi_size,
