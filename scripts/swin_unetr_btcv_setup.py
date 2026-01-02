@@ -148,6 +148,9 @@ class _SafeRandCropByLabelClassesd(Randomizable):
         ratios,
         num_samples: int,
         debug_max_prints: int = 4,
+        min_fg_vox: int = 0,
+        max_tries: int = 1,
+        enable_rejection: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -158,6 +161,10 @@ class _SafeRandCropByLabelClassesd(Randomizable):
         self._debug_max = debug_max_prints
         self._debug_seen = 0
         self._fg_empty_seen = 0
+        self._rejection_warned = False
+        self.min_fg_vox = int(min_fg_vox)
+        self.max_tries = int(max_tries)
+        self.enable_rejection = bool(enable_rejection)
         self.cropper_fg = RandCropByLabelClassesd(
             keys=keys,
             label_key=label_key,
@@ -185,6 +192,19 @@ class _SafeRandCropByLabelClassesd(Randomizable):
         self.cropper_fg.set_random_state(seed=int(self.R.randint(max_seed, dtype="uint32")))
         self.cropper_bg.set_random_state(seed=int(self.R.randint(max_seed, dtype="uint32")))
         return self
+
+    def _count_fg_vox(self, sample) -> int:
+        if isinstance(sample, (list, tuple)):
+            sample = sample[0] if sample else None
+        if not isinstance(sample, dict):
+            return 0
+        label = sample.get(self.label_key)
+        if label is None:
+            return 0
+        label_np = _to_numpy(label)
+        if label_np.ndim >= 4 and label_np.shape[0] > 1:
+            return int(np.sum(label_np[1:] > 0))
+        return int(np.sum(label_np > 0))
 
     def __call__(self, data):
         label = data.get(self.label_key)
@@ -261,7 +281,21 @@ class _SafeRandCropByLabelClassesd(Randomizable):
                 self.cropper_fg.ratios = effective_ratios
             if hasattr(self.cropper_fg, "cropper") and hasattr(self.cropper_fg.cropper, "ratios"):
                 self.cropper_fg.cropper.ratios = effective_ratios
-        return self.cropper_fg(data)
+        if not self.enable_rejection or self.min_fg_vox <= 0 or self.max_tries <= 1:
+            return self.cropper_fg(data)
+        result = None
+        for _ in range(self.max_tries):
+            result = self.cropper_fg(data)
+            fg_vox = self._count_fg_vox(result)
+            if fg_vox >= self.min_fg_vox:
+                return result
+        if not self._rejection_warned:
+            print(
+                f"[WARN] Unable to meet min_fg_vox={self.min_fg_vox} "
+                f"after {self.max_tries} tries; using last crop."
+            )
+            self._rejection_warned = True
+        return result
 
 
 def set_seed(seed: int) -> None:
@@ -467,6 +501,10 @@ def create_hvsmr_loaders(
     batch_size: int = 1,
     num_workers: int = 4,
     overfit_debug: bool = False,
+    overfit_case_id: str | None = None,
+    min_fg_vox: int = 0,
+    crop_max_tries: int = 1,
+    enable_crop_rejection: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create train/val loaders for HVSMR using nnU-Net split files and 3D patches.
@@ -476,9 +514,17 @@ def create_hvsmr_loaders(
     train_ids = load_case_ids(train_split_file)
     val_ids = load_case_ids(val_split_file)
     if overfit_debug:
-        train_ids = train_ids[:2]
-        val_ids = val_ids[:1]
-        print(f"[OVERFIT DEBUG] Restricting to {len(train_ids)} train / {len(val_ids)} val cases; augmentations disabled.")
+        selected = overfit_case_id
+        if selected is None:
+            if train_ids:
+                selected = train_ids[0]
+            elif val_ids:
+                selected = val_ids[0]
+            else:
+                raise RuntimeError("Overfit debug enabled but no case IDs are available from splits.")
+        train_ids = [selected]
+        val_ids = [selected]
+        print(f"[OVERFIT DEBUG] case_id={selected} train=1 val=1; augmentations disabled.")
     train_dicts = build_dataset_dicts(data_root, train_ids, label_root=label_root)
     if overfit_debug:
         debug_repeat_factor = 32
@@ -529,6 +575,9 @@ def create_hvsmr_loaders(
             num_classes=hvsmr_num_classes,
             ratios=crop_ratios,
             num_samples=crop_num_samples,
+            min_fg_vox=min_fg_vox,
+            max_tries=crop_max_tries,
+            enable_rejection=enable_crop_rejection,
         ),
         _DebugLabelStatsd(label_key=label_key, num_classes=hvsmr_num_classes, tag="post-crop", max_prints=4),
         ResizeWithPadOrCropd(keys=spatial_keys, spatial_size=roi_size),

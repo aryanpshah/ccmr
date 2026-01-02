@@ -6,6 +6,7 @@ Defaults freeze the backbone so only LoRA params (and any unfrozen heads) train.
 import argparse
 import json
 import math
+import random
 import socket
 import subprocess
 import sys
@@ -117,6 +118,7 @@ def train_epoch(
     rare_classes: list[int],
     overfit_debug: bool = False,
     max_train_batches: Optional[int] = None,
+    debug_steps: int = 10,
 ) -> float:
     model.train()
     epoch_loss = 0.0
@@ -128,10 +130,6 @@ def train_epoch(
         images = batch["image"].to(device)
         labels = batch["label"].to(device).long()
         step_display = step + 1
-        if overfit_debug and epoch == 0 and step < 20:
-            gt_unique = torch.unique(labels).detach().cpu().tolist()
-            gt_hist = torch.bincount(labels.flatten(), minlength=NUM_CLASSES).detach().cpu().tolist()
-            print(f"[TRAIN DEBUG] step={step_display} gt_unique={gt_unique} gt_hist={gt_hist}")
         assert torch.all((labels >= 0) & (labels < NUM_CLASSES)), f"Found invalid label values: {torch.unique(labels)}"
         logits = model(images)
         base_loss = loss_function(logits, labels)
@@ -151,6 +149,20 @@ def train_epoch(
                 rare_dice_loss = 1.0 - dice
 
         loss = base_loss + rare_dice_w * rare_dice_loss
+        if overfit_debug and epoch == 0 and step < debug_steps:
+            with torch.no_grad():
+                pred = torch.argmax(logits, dim=1)
+                y_unique = torch.unique(labels).detach().cpu().tolist()
+                p_unique = torch.unique(pred).detach().cpu().tolist()
+                fg_vox = int((labels > 0).sum().item())
+                fg_frac = fg_vox / float(labels.numel())
+                p_fg_vox = int((pred > 0).sum().item())
+                p_fg_frac = p_fg_vox / float(pred.numel())
+                loss_value = float(loss.item())
+            print(
+                f"[TRAIN DBG] e={epoch} step={step_display} fg_frac={fg_frac:.4f} fg_vox={fg_vox} "
+                f"yuniq={y_unique} puniq={p_unique} p_fg={p_fg_frac:.4f} loss={loss_value:.4f}"
+            )
         loss_to_backprop = loss / grad_accum
         loss_to_backprop.backward()
         if epoch == 0 and step == 0:
@@ -204,6 +216,7 @@ def validate_epoch(
     loader: torch.utils.data.DataLoader,
     device: torch.device,
     roi_size: Iterable[int],
+    debug: bool = False,
 ) -> Tuple[float, np.ndarray, float]:
     model.eval()
     post_pred = AsDiscrete(argmax=True, to_onehot=NUM_CLASSES)
@@ -253,6 +266,14 @@ def validate_epoch(
                 continue
             logits = sliding_window_inference(images, roi_size=roi_size, sw_batch_size=1, predictor=model)
             probs = torch.softmax(logits, dim=1)
+            if debug and batch_idx == 0:
+                pred = torch.argmax(probs, dim=1)
+                gt_unique = torch.unique(labels).detach().cpu().tolist()
+                pred_unique = torch.unique(pred).detach().cpu().tolist()
+                print(
+                    f"[VAL DBG] img={tuple(images.shape)} lab={tuple(labels.shape)} "
+                    f"yuniq={gt_unique} puniq={pred_unique}"
+                )
 
             # Compute Dice per batch and release predictions immediately to avoid caching full volumes.
             preds = [post_pred(i) for i in decollate_batch(probs)]
@@ -303,6 +324,9 @@ def main():
     parser.add_argument("--lora_alpha", type=float, default=1.0)
     parser.add_argument("--freeze_backbone", action="store_true", default=True, help="Freeze backbone parameters (default).")
     parser.add_argument("--no_freeze_backbone", action="store_true", default=False, help="Train full backbone along with LoRA.")
+    parser.add_argument("--overfit_case_id", type=str, default=None, help="Case ID to overfit when --overfit_debug is set.")
+    parser.add_argument("--min_fg_vox", type=int, default=2000, help="Minimum foreground voxels for crop rejection sampling.")
+    parser.add_argument("--crop_max_tries", type=int, default=20, help="Max resample attempts for crop rejection sampling.")
     parser.add_argument(
         "--max_train_batches",
         type=int,
@@ -332,6 +356,23 @@ def main():
     print("Training Swin-UNETR with LoRA adapters (Q/V).")
     set_seed(args.seed)
     set_determinism(seed=args.seed)
+    if args.overfit_debug:
+        seed = args.seed if args.seed is not None else 0
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        if args.num_workers != 0:
+            print(f"[OVERFIT DEBUG] Forcing num_workers=0 (was {args.num_workers}).")
+            args.num_workers = 0
+        if args.max_train_batches is None or args.max_train_batches < 128:
+            print(f"[OVERFIT DEBUG] Setting max_train_batches=128 (was {args.max_train_batches}).")
+            args.max_train_batches = 128
+        if args.patience < args.epochs * 10:
+            print(f"[OVERFIT DEBUG] Increasing patience to {args.epochs * 10}.")
+            args.patience = args.epochs * 10
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     roi_size = tuple(args.roi_size)
@@ -342,6 +383,48 @@ def main():
     dump_run_config(args, args.output_dir)
 
     # The train/val splits are read from the same txt files used by nnU-Net, so Swin-UNETR sees the same images as nnU-Net for a fair comparison.
+    overfit_case_id = None
+    if args.overfit_debug:
+        if args.overfit_case_id:
+            overfit_case_id = args.overfit_case_id
+        elif args.train_split and Path(args.train_split).is_file():
+            with Path(args.train_split).open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        overfit_case_id = line
+                        break
+        if overfit_case_id is None:
+            default_id = "pat17"
+            img_root = Path(args.data_root) / "imagesTr"
+            search_root = img_root if img_root.is_dir() else Path(args.data_root)
+            matches = list(search_root.glob(f"{default_id}*.nii*"))
+            if matches:
+                overfit_case_id = default_id
+            else:
+                print(f"[OVERFIT DEBUG] Default case_id {default_id} not found under {search_root}; using it anyway.")
+                overfit_case_id = default_id
+        print(f"[OVERFIT_DEBUG] case_id={overfit_case_id} train=1 val=1")
+        print(
+            "[OVERFIT_DEBUG] Example command:\n"
+            "  python -u scripts/train_swin_unetr_lora.py \\\n"
+            "    --data_root data/processed/hvsmr2 \\\n"
+            "    --label_root data/processed/hvsmr2/labelsTr_matched \\\n"
+            "    --train_split data/splits/train_L40.txt \\\n"
+            "    --val_split data/splits/val_ids.txt \\\n"
+            "    --output_dir runs/overfit_pat17_debug \\\n"
+            "    --epochs 120 \\\n"
+            "    --batch_size 1 \\\n"
+            "    --roi_size 128 128 128 \\\n"
+            "    --num_workers 0 \\\n"
+            "    --max_train_batches 128 \\\n"
+            f"    --overfit_debug --overfit_case_id {overfit_case_id}"
+        )
+
+    enable_crop_rejection = args.overfit_debug or ("--min_fg_vox" in sys.argv or "--crop_max_tries" in sys.argv)
+    min_fg_vox = args.min_fg_vox if enable_crop_rejection else 0
+    crop_max_tries = args.crop_max_tries if enable_crop_rejection else 1
+
     train_loader, val_loader = create_hvsmr_loaders(
         data_root=str(args.data_root),
         train_split_file=str(args.train_split),
@@ -351,6 +434,10 @@ def main():
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         overfit_debug=args.overfit_debug,
+        overfit_case_id=overfit_case_id,
+        min_fg_vox=min_fg_vox,
+        crop_max_tries=crop_max_tries,
+        enable_crop_rejection=enable_crop_rejection,
     )
     log_and_validate_batch_shape(train_loader, roi_size)
     print(f"Summary: train cases={len(train_loader.dataset)}, val cases={len(val_loader.dataset)}, roi_size={roi_size}, batch_size={args.batch_size}")
@@ -446,6 +533,14 @@ def main():
         softmax=True,
         include_background=False,
         weight=ce_weights,
+    )
+    lambda_dice = getattr(loss_function, "lambda_dice", 1.0)
+    lambda_ce = getattr(loss_function, "lambda_ce", 1.0)
+    print(
+        "[LOSS] "
+        f"dice(include_bg={loss_function.include_background}, softmax={loss_function.softmax}, onehot={loss_function.to_onehot_y}), "
+        f"ce(weights={ce_weights.detach().cpu().tolist()}), total=dice+ce, "
+        f"lambda_dice={lambda_dice}, lambda_ce={lambda_ce}"
     )
     group_a_params: list[torch.nn.Parameter] = []
     group_b_params: list[torch.nn.Parameter] = []
@@ -561,11 +656,18 @@ def main():
             rare_classes=rare_classes,
             overfit_debug=args.overfit_debug,
             max_train_batches=args.max_train_batches,
+            debug_steps=10,
         )
         print(f"  Mean train loss: {train_loss:.4f}")
         print(f"  Learning rates: groupA={lr_group_a:.3e} | groupB={lr_group_b:.3e}")
 
-        val_mean_all, val_per_class_mean, val_mean_fg = validate_epoch(model, val_loader, device, roi_size)
+        val_mean_all, val_per_class_mean, val_mean_fg = validate_epoch(
+            model,
+            val_loader,
+            device,
+            roi_size,
+            debug=bool(args.overfit_debug and epoch == 0),
+        )
         per_class_str = ", ".join(f"{i}:{float(v):.3f}" for i, v in enumerate(val_per_class_mean))
         per_class_fg_str = ", ".join(f"{i}:{float(val_per_class_mean[i]):.3f}" for i in range(1, NUM_CLASSES))
         print(f"  Val mean Dice (all): {val_mean_all:.4f}")
