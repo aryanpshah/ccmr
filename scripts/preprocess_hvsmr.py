@@ -200,24 +200,54 @@ def generate_matched_labels(
     case_ids: Sequence[str] | None,
     target_shape: Tuple[int, int, int],
     target_spacing: Tuple[float, float, float],
+    *,
+    skip_missing_labels: bool = False,
 ) -> None:
     label_map = discover_label_cases(raw_label_dir)
+    missing_labels: List[str] = []
+    missing_labels_path: str | None = None
     if case_ids:
         requested = set(case_ids)
         missing = sorted(requested - set(label_map))
         if missing:
-            raise ValueError(f"Requested case_ids missing in {raw_label_dir}: {', '.join(missing)}")
+            for case_id in missing:
+                raw_path = os.path.join(raw_label_dir, f"{case_id}_label.nii.gz")
+                print(f"[ERROR] Missing raw label for {case_id}: {raw_path}")
+            if not skip_missing_labels:
+                raise RuntimeError(f"Missing raw labels for {len(missing)} case(s); aborting.")
+            missing_labels.extend(missing)
         label_map = {cid: label_map[cid] for cid in label_map if cid in requested}
 
     os.makedirs(out_label_dir, exist_ok=True)
     sorted_cases = sorted(label_map.items(), key=lambda kv: extract_case_info(kv[1])[0])
+    written_count = 0
     for case_id, label_path in sorted_cases:
+        if not os.path.exists(label_path):
+            print(f"[ERROR] Missing raw label for {case_id}: {label_path}")
+            missing_labels.append(case_id)
+            if not skip_missing_labels:
+                raise RuntimeError(f"Missing raw label for {case_id}: {label_path}")
+            continue
         processed = process_label(label_path, target_spacing, target_shape)
         out_path = os.path.join(out_label_dir, f"{case_id}_label.nii.gz")
         save_nifti(processed, out_path)
         uniques = np.unique(processed).tolist()
         nonzero = int(np.count_nonzero(processed))
         print(f"[MATCHED LABEL] {case_id} unique={uniques} nonzero_voxels={nonzero}")
+        written_count += 1
+
+    missing_labels = sorted(set(missing_labels))
+    if missing_labels and skip_missing_labels:
+        missing_labels_path = os.path.join(out_label_dir, "missing_labels.txt")
+        with open(missing_labels_path, "w", encoding="utf-8") as f:
+            for case_id in missing_labels:
+                f.write(f"{case_id}\n")
+
+    missing_count = len(missing_labels)
+    summary = f"[MATCHED LABEL SUMMARY] written={written_count} missing={missing_count}"
+    if missing_labels_path:
+        summary += f" missing_labels_path={missing_labels_path}"
+    print(summary)
 
 
 def save_nifti(volume_zyx: np.ndarray, out_path: str) -> None:
@@ -356,6 +386,11 @@ def main() -> None:
         action="store_true",
         help="Generate matched labels aligned to processed images.",
     )
+    parser.add_argument(
+        "--skip_missing_labels",
+        action="store_true",
+        help="Skip missing raw labels when generating matched labels (writes missing_labels.txt).",
+    )
     args = parser.parse_args()
 
     if args.make_matched_labels:
@@ -368,6 +403,7 @@ def main() -> None:
             case_ids,
             target_shape,
             target_spacing,
+            skip_missing_labels=args.skip_missing_labels,
         )
 
     severity_map = load_severity_map(CLINICAL_CSV)
