@@ -375,6 +375,8 @@ def main():
     parser.add_argument("--overfit_case_id", type=str, default=None, help="Case ID to overfit when --overfit_debug is set.")
     parser.add_argument("--min_fg_vox", type=int, default=2000, help="Minimum foreground voxels for crop rejection sampling.")
     parser.add_argument("--crop_max_tries", type=int, default=20, help="Max resample attempts for crop rejection sampling.")
+    parser.add_argument("--num_samples_per_volume", type=int, default=None, help="Override num_samples for label-aware crops.")
+    parser.add_argument("--rare_bias_78", action="store_true", default=False, help="Bias crop ratios toward classes 7/8.")
     parser.add_argument(
         "--max_train_batches",
         type=int,
@@ -389,6 +391,8 @@ def main():
         default="7,8",
         help="Comma-separated list of rare class indices to regularize (e.g., '7,8').",
     )
+    parser.add_argument("--ce_bg_w", type=float, default=None, help="Override CE background class weight.")
+    parser.add_argument("--ce_w_78", type=float, default=None, help="Override CE weights for classes 7 and 8.")
     parser.add_argument("--lr", "--lr_max", dest="lr_max", type=float, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--lr_min", type=float, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--weight_decay", type=float, default=None, help=argparse.SUPPRESS)
@@ -489,6 +493,16 @@ def main():
     min_fg_vox = args.min_fg_vox if enable_crop_rejection else 0
     crop_max_tries = args.crop_max_tries if enable_crop_rejection else 1
     overfit_train_steps = args.max_train_batches if args.overfit_debug else None
+    print(
+        "[TRAINING] "
+        f"num_samples_per_volume={args.num_samples_per_volume}, "
+        f"rare_bias_78={args.rare_bias_78}, "
+        f"ce_bg_w={args.ce_bg_w}, "
+        f"ce_w_78={args.ce_w_78}, "
+        f"min_fg_vox={min_fg_vox}, "
+        f"crop_max_tries={crop_max_tries}, "
+        f"max_train_batches={args.max_train_batches}"
+    )
 
     train_loader, val_loader = create_hvsmr_loaders(
         data_root=str(args.data_root),
@@ -506,6 +520,8 @@ def main():
         min_fg_vox=min_fg_vox,
         crop_max_tries=crop_max_tries,
         enable_crop_rejection=enable_crop_rejection,
+        num_samples_per_volume=args.num_samples_per_volume,
+        rare_bias_78=args.rare_bias_78,
     )
     print(f"[TRAIN LOADER] len(train_loader)={len(train_loader)} max_train_batches={args.max_train_batches}")
     log_and_validate_batch_shape(train_loader, roi_size)
@@ -599,11 +615,20 @@ def main():
         dummy = torch.randn((1, 1, *roi_size), device=device)
         _ = model(dummy)
 
-    ce_weights = torch.tensor(
-        [0.02, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-        dtype=torch.float32,
-        device=device,
-    )  # low background weight for CE
+    use_custom_ce = args.ce_bg_w is not None or args.ce_w_78 is not None
+    if use_custom_ce:
+        ce_weights = torch.ones(NUM_CLASSES, dtype=torch.float32, device=device)
+        if args.ce_bg_w is not None:
+            ce_weights[0] = float(args.ce_bg_w)
+        if args.ce_w_78 is not None:
+            ce_weights[7] = float(args.ce_w_78)
+            ce_weights[8] = float(args.ce_w_78)
+    else:
+        ce_weights = torch.tensor(
+            [0.02, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            dtype=torch.float32,
+            device=device,
+        )  # low background weight for CE
     loss_function = DiceCELoss(
         to_onehot_y=True,
         softmax=True,
@@ -611,15 +636,22 @@ def main():
         weight=ce_weights,
     )
     loss_type, include_bg, softmax, to_onehot_y, ce_weights_print = _summarize_loss_config(loss_function)
-    lambda_dice = getattr(loss_function, "lambda_dice", 1.0)
-    lambda_ce = getattr(loss_function, "lambda_ce", 1.0)
-    print(
-        "[LOSS] "
-        f"type={loss_type} "
-        f"dice(include_bg={include_bg}, softmax={softmax}, onehot={to_onehot_y}) "
-        f"ce(weights={ce_weights_print}) total=dice+ce, "
-        f"lambda_dice={lambda_dice}, lambda_ce={lambda_ce}"
-    )
+    if use_custom_ce:
+        print(
+            "[LOSS] "
+            f"dice(include_bg={include_bg}, softmax={softmax}, onehot={to_onehot_y}), "
+            f"ce(weights={ce_weights_print})"
+        )
+    else:
+        lambda_dice = getattr(loss_function, "lambda_dice", 1.0)
+        lambda_ce = getattr(loss_function, "lambda_ce", 1.0)
+        print(
+            "[LOSS] "
+            f"type={loss_type} "
+            f"dice(include_bg={include_bg}, softmax={softmax}, onehot={to_onehot_y}) "
+            f"ce(weights={ce_weights_print}) total=dice+ce, "
+            f"lambda_dice={lambda_dice}, lambda_ce={lambda_ce}"
+        )
     group_a_params: list[torch.nn.Parameter] = []
     group_b_params: list[torch.nn.Parameter] = []
     for name, param in model.named_parameters():

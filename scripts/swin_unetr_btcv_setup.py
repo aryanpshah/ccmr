@@ -508,6 +508,8 @@ def create_hvsmr_loaders(
     train_ids: List[str] | None = None,
     val_ids: List[str] | None = None,
     overfit_train_steps: int | None = None,
+    num_samples_per_volume: int | None = None,
+    rare_bias_78: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create train/val loaders for HVSMR using nnU-Net split files and 3D patches.
@@ -569,8 +571,11 @@ def create_hvsmr_loaders(
         print(f"[OVERFIT_DEBUG] num_samples_per_case={num_samples_per_case}")
     else:
         num_samples_per_case = rand_crop_samples
-    crop_num_samples = num_samples_per_case
-    crop_ratios = [0.0, 1, 1, 1, 1, 1, 1, 1, 1]  # background never selected
+    crop_num_samples = num_samples_per_case if num_samples_per_volume is None else int(num_samples_per_volume)
+    if rare_bias_78:
+        crop_ratios = [0.0, 1, 1, 1, 1, 1, 1, 3, 6]  # background never selected
+    else:
+        crop_ratios = [0.0, 1, 1, 1, 1, 1, 1, 1, 1]  # background never selected
     if len(crop_ratios) != hvsmr_num_classes:
         raise ValueError(
             f"Crop ratios length {len(crop_ratios)} must match hvsmr_num_classes={hvsmr_num_classes}."
