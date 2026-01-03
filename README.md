@@ -1,76 +1,161 @@
-# CCMR - HVSMR2 Segmentation Toolkit (Swin-UNETR + LoRA)
+# CCMR - Label-Efficient Whole-Heart CMR Segmentation (Swin-UNETR + LoRA)
 
-This repository provides a complete workflow for cardiac MRI segmentation on HVSMR-2.0 style data using MONAI Swin-UNETR. It includes preprocessing, split generation, training (from scratch, BTCV fine-tune, and LoRA adapters), evaluation, and optional nnU-Net utilities.
+This repository implements a full experimental pipeline to study label efficiency for congenital cardiac MRI (CMR) segmentation on HVSMR-2.0 style data. It compares a strong nnU-Net baseline against MONAI Swin-UNETR variants (scratch, full fine-tune, and parameter-efficient LoRA) across multiple label budgets, with standardized preprocessing, splits, training, and evaluation.
 
-Everything below is written to be environment-agnostic and does not include any personal or machine-specific information.
+No personal or machine-specific information is included here.
 
-## Table of contents
+## Project overview
 
-- Overview
-- Repository layout
-- Requirements
-- Environment setup
-- Data preparation
-  - Raw data layout
-  - Preprocessing and split generation
-  - Matched labels for aligned training
-  - What the loaders search for
-- Pretrained BTCV weights (optional)
-- Training workflows
-  - Common flags
-  - Train from scratch
-  - Fine-tune from BTCV weights
-  - LoRA fine-tune (parameter efficient)
-  - Rare class sampling and loss weighting
-  - Overfit/debug mode
-- Evaluation
-- Single volume inference
-- nnU-Net utilities (optional)
-- Visualization
-- Outputs and logging
-- Troubleshooting
+### Goal
 
-## Overview
+This project explores how much labeled data is actually required to train accurate whole-heart congenital CMR segmentation models. We systematically evaluate whether lightweight adaptation methods can match the performance of full fine-tuning as the amount of annotated data increases. By quantifying the trade-off between annotation effort and segmentation quality, this work aims to provide practical guidance for building clinically usable models under limited labeling budgets.
 
-- The core Swin-UNETR training and data loading utilities live in `scripts/swin_unetr_btcv_setup.py`.
-- The training scripts are:
-  - `scripts/train_swin_unetr_scratch.py` for scratch training.
-  - `scripts/train_swin_unetr_finetune_btcv.py` for full fine-tuning from BTCV weights.
-  - `scripts/train_swin_unetr_lora.py` for LoRA adapter training on attention Q/V projections.
-- The evaluation script is `scripts/eval_swin_unetr.py`.
-- The repo also contains an older baseline `scripts/train_swin_unetr.py` that uses a separate preprocessing path; it is kept for reference and is not the recommended path for new runs.
+### Core hypotheses
 
-The Swin-UNETR scripts are configured for 9 classes by default (label 0 is background, labels 1-8 are structures). If your dataset uses a different label set, update `NUM_CLASSES` and related settings in `scripts/swin_unetr_btcv_setup.py` and ensure your labels match.
+- Strong baselines (nnU-Net) set an upper bound on performance under limited labels.
+- Parameter-efficient adaptation (LoRA on Swin-UNETR) can approach full fine-tuning performance with far fewer trainable parameters.
+- As label budget grows (L=5, 10, 20, 40), the performance gap between lightweight adaptation and full fine-tuning shrinks.
 
-## Repository layout
+### Key comparisons
 
-Key paths and what they are used for:
+- Baseline: nnU-Net v2 (scratch training).
+- Swin-UNETR (scratch).
+- Swin-UNETR (full fine-tune from BTCV pretrained weights).
+- Swin-UNETR + LoRA (adapters on attention Q/V projections, frozen backbone).
 
-- `scripts/` - all training, preprocessing, evaluation, and utility scripts.
-- `models/` - model definitions and LoRA utilities.
-- `data/` - expected data root (raw and processed data live here).
-- `pretrained/` - optional pretrained checkpoints (for BTCV fine-tuning).
-- `logs/` or `runs/` - default output folders for training artifacts (config files, checkpoints).
+Metrics include per-class Dice, mean Dice (all and foreground), and Hausdorff distance (HD95). Additional analysis includes parameter counts, learning curves, and label-budget scaling behavior.
 
-Important scripts:
+## Hyperparameters
 
-- `scripts/preprocess_hvsmr.py` - preprocess raw HVSMR-2.0 data, resample, crop/pad, and generate split files.
-- `scripts/swin_unetr_btcv_setup.py` - loader/model setup shared by training scripts.
-- `scripts/train_swin_unetr_scratch.py` - Swin-UNETR training from scratch.
-- `scripts/train_swin_unetr_finetune_btcv.py` - Swin-UNETR full fine-tuning from BTCV weights.
-- `scripts/train_swin_unetr_lora.py` - LoRA adapter training on Swin-UNETR attention Q/V.
-- `scripts/eval_swin_unetr.py` - evaluation on a test split.
-- `scripts/install_btcv_model.sh` - helper to unpack a BTCV Swin-UNETR bundle zip and locate `model.pt`.
-- `scripts/setup_nnunet_dataset.py` - create nnU-Net v2 dataset from processed volumes.
-- `scripts/visualize_predictions.py` - simple qualitative overlays for nnU-Net predictions.
+The following hyperparameters are used in the provided scripts (adapted from nnU-Net defaults and MONAI BTCV settings):
 
-## Requirements
+| Hyperparameter | Scratch | Full Fine-tune | LoRA |
+| --- | --- | --- | --- |
+| Optimizer | AdamW | AdamW | AdamW |
+| LR | lr_max=2e-4, lr_min=2e-5 | lr_max=6e-5, lr_min=6e-6 | lr_lora=5e-4, lr_backbone=1e-5 |
+| Scheduler | cosine/poly to 0 | cosine/poly to 0 | cosine/poly to 0 |
+| Weight decay | 1e-2 | 3e-3 | wd_lora=1e-2, wd_backbone=1e-4 |
+| Patch size | 128 x 128 x 128 | 128 x 128 x 128 | 128 x 128 x 128 |
+| Batch size | 1 | 1 | 1 |
+| Max epochs | 300 | 300 | 300 |
+| Early stopping | 60 | 60 | 60 |
 
-- Python 3.10 or 3.11 recommended.
-- A CUDA-capable GPU is strongly recommended for training. CPU-only training will be extremely slow.
-- Dependencies are pinned in `requirements.txt`.
+## Repository layout (detailed file guide)
 
-Key dependencies include MONAI, PyTorch, nibabel, scikit-image, and nnU-Net v2.
+### Top-level
+
+- `README.md`: this document.
+- `requirements.txt`: pinned Python dependencies (MONAI, PyTorch, nnU-Net, etc.).
+- `data/`: expected data root. Raw data, processed data, splits, and nnU-Net data live here.
+- `pretrained/`: optional pretrained checkpoints (BTCV Swin-UNETR bundles).
+- `logs/`, `runs/`, `results/`, `figures/`: output folders used by training and evaluation scripts.
+
+### Models and training utilities
+
+- `models/lora_utils.py`:
+  - Implements LoRA adapters for Swin-UNETR attention Q/V projections.
+  - Provides parameter counting, LoRA module summaries, and trainable parameter grouping helpers.
+
+### Scripts (by purpose)
+
+#### Data preprocessing and splits
+
+- `scripts/preprocess_hvsmr.py`
+  - Core preprocessing script for HVSMR-2.0 style data.
+  - Resamples to 1 mm isotropic, center crops/pads to 192^3, saves to `data/processed/images`.
+  - Creates stratified train/val/test splits (40/10/10) preserving severity balance.
+  - Creates nested label budgets (L=5, 10, 20, 40) using a fixed seed.
+  - Can also generate matched labels aligned to processed images.
+
+- `scripts/plot_preprocessed.py`
+  - Utility to visualize preprocessed volumes and masks to confirm shape and label integrity.
+
+- `scripts/sanity_check_nnunet_datasets.py`
+  - Validates nnU-Net dataset structures and split integrity.
+
+#### Swin-UNETR data loading and model setup
+
+- `scripts/swin_unetr_btcv_setup.py`
+  - Shared utilities for Swin-UNETR training and inference.
+  - Defines `create_model`, `create_hvsmr_loaders`, and file resolution logic.
+  - Implements label-aware random cropping with optional foreground rejection and class-balanced ratios.
+  - Contains a CLI entry point for one-off inference with a given checkpoint.
+
+#### Swin-UNETR training
+
+- `scripts/train_swin_unetr_scratch.py`
+  - Trains Swin-UNETR from scratch (no pretrained weights).
+  - Uses shared loaders and default class weights.
+
+- `scripts/train_swin_unetr_finetune_btcv.py`
+  - Full fine-tune of Swin-UNETR from BTCV pretrained weights.
+  - Loads `model.pt`, replaces head for 9 classes, and trains all layers.
+
+- `scripts/train_swin_unetr_lora.py`
+  - LoRA adapter training on Swin-UNETR attention Q/V projections.
+  - By default freezes the backbone and trains LoRA + decoder/head.
+  - Supports rare-class sampling and CE reweighting (see below).
+
+- `scripts/train_swin_unetr.py`
+  - Legacy training script with a different preprocessing path.
+  - Kept for reference only; not the primary training path.
+
+#### Swin-UNETR evaluation and utilities
+
+- `scripts/eval_swin_unetr.py`
+  - Evaluates a trained Swin-UNETR on a test split.
+  - Computes per-class Dice, mean Dice, and HD95; saves metrics JSON.
+
+- `scripts/training_utils.py`
+  - Helper functions for checkpointing and metric aggregation.
+
+#### nnU-Net utilities
+
+- `scripts/setup_nnunet_dataset.py`
+  - Converts processed HVSMR data into nnU-Net v2 dataset format.
+  - Creates dataset.json and organizes imagesTr/labelsTr.
+
+- `scripts/add_labelsTs.py`
+  - Creates labelsTs for existing nnU-Net datasets without altering splits.
+  - Reuses the same mask processing pipeline as dataset setup.
+
+- `scripts/build_labelsTs_from_dataset_json.py`
+  - Copies labels for test IDs into labelsTs using dataset.json entries.
+  - Helpful when test labels need to be packaged for evaluation.
+
+- `scripts/train_nnunet_label_budgets.ps1`
+  - PowerShell helper to run nnU-Net training across label budgets.
+
+- `scripts/run_nnunet_inference_and_eval.sh`
+  - Runs inference and evaluation for nnU-Net models.
+
+- `scripts/parse_nnunet_log.py`, `scripts/extract_nnunet_metrics.py`
+  - Log parsing and metric extraction utilities.
+
+- `scripts/export_all_metrics.sh`
+  - Batch-extracts metrics for all label budgets from nnU-Net results folders.
+
+- `scripts/nnunet_env.ps1`
+  - Sets nnU-Net v2 environment variables for the local `data/nnunet` layout.
+
+#### Visualization
+
+- `scripts/visualize_predictions.py`
+  - Generates qualitative overlays of predictions vs ground truth.
+
+#### Convenience launchers
+
+- `scripts/launch_swin_unetr_scratch.sh`
+  - Bash wrapper to launch scratch training with environment variables.
+
+- `scripts/launch_swin_unetr_finetune.sh`
+  - Bash wrapper to launch BTCV fine-tuning.
+
+- `scripts/install_btcv_model.sh`
+  - Helper to unpack BTCV model bundle zip and locate `model.pt`.
+
+- `scripts/install_ngc.sh`
+  - Placeholder for NGC CLI installation steps (currently empty).
 
 ## Environment setup
 
@@ -106,9 +191,7 @@ print('cuda', torch.cuda.is_available())
 PY
 ```
 
-## Remote GPU setup and MONAI installation
-
-This section is tailored to a RunPod workflow and a MONAI-focused setup checklist.
+## Remote GPU setup and MONAI installation (RunPod)
 
 ### RunPod workflow (SSH + sync + run)
 
@@ -178,8 +261,6 @@ If CUDA is not detected, verify:
 - GPU drivers are installed and match your CUDA runtime.
 - The correct PyTorch build is installed (CUDA-enabled).
 - The environment variable `CUDA_VISIBLE_DEVICES` is not hiding GPUs.
-
-For reproducibility on remote systems, consider fixing seeds and enabling deterministic behavior (already done in training scripts).
 
 ## Data preparation
 
@@ -291,8 +372,6 @@ Note: Access to NGC models depends on your account permissions. If CLI download 
 
 ### Train from scratch
 
-Use `scripts/train_swin_unetr_scratch.py` to train from random initialization.
-
 ```bash
 python -u scripts/train_swin_unetr_scratch.py \
   --data_root data/processed/hvsmr2 \
@@ -306,8 +385,6 @@ python -u scripts/train_swin_unetr_scratch.py \
 ```
 
 ### Fine-tune from BTCV weights
-
-Use `scripts/train_swin_unetr_finetune_btcv.py` to load a BTCV checkpoint and fine-tune all parameters.
 
 ```bash
 python -u scripts/train_swin_unetr_finetune_btcv.py \
@@ -324,8 +401,6 @@ python -u scripts/train_swin_unetr_finetune_btcv.py \
 
 ### LoRA fine-tune (parameter efficient)
 
-Use `scripts/train_swin_unetr_lora.py` to train LoRA adapters on Swin-UNETR attention Q/V projections. By default the backbone is frozen and only LoRA and decoder/head parameters train.
-
 ```bash
 python -u scripts/train_swin_unetr_lora.py \
   --data_root data/processed/hvsmr2 \
@@ -339,16 +414,9 @@ python -u scripts/train_swin_unetr_lora.py \
   --output_dir runs/swin_unetr/L40_lora
 ```
 
-Key LoRA flags:
+### Rare class sampling and loss weighting (LoRA)
 
-- `--lora_rank` rank of the adapters (0 disables LoRA).
-- `--lora_alpha` scaling factor.
-- `--freeze_backbone` / `--no_freeze_backbone` to control backbone training.
-- `--grad_accum` for gradient accumulation.
-
-### Rare class sampling and loss weighting
-
-The LoRA script exposes optional flags for rare class exposure and CE weighting. Defaults keep the current behavior.
+The LoRA script supports optional flags for rare class exposure and CE weighting. Defaults keep current behavior.
 
 Sampling:
 
@@ -379,9 +447,9 @@ python -u scripts/train_swin_unetr_lora.py \
   --ce_w_78 3.0
 ```
 
-### Overfit/debug mode
+### Overfit/debug mode (LoRA)
 
-`--overfit_debug` in the LoRA script forces deterministic behavior, restricts data to a single case, and increases steps per epoch for sanity checking. This is useful when verifying preprocessing and label integrity.
+`--overfit_debug` forces deterministic behavior, restricts data to a single case, and increases steps per epoch for sanity checking.
 
 ## Evaluation
 
@@ -400,7 +468,7 @@ The script prints per-class metrics and writes a JSON summary.
 
 ## Single volume inference
 
-`scripts/swin_unetr_btcv_setup.py` includes a CLI entry point that can run inference on a single volume. It expects a model checkpoint and saves a NIfTI mask next to your output directory.
+`scripts/swin_unetr_btcv_setup.py` includes a CLI entry point that can run inference on a single volume. It expects a model checkpoint and saves a NIfTI mask to your output directory.
 
 ```bash
 python -u scripts/swin_unetr_btcv_setup.py \
@@ -444,9 +512,6 @@ Typical outputs by script:
 
 - Import errors (for example, `ModuleNotFoundError: monai`): ensure your virtual environment is activated.
 - CUDA out of memory: reduce `--roi_size`, `--batch_size`, or increase `--grad_accum`.
-- Zero foreground Dice: verify labels are aligned and non-empty. Use `--rare_bias_78` and CE weights in the LoRA script if rare classes are underrepresented.
-- Missing labels or images: verify your split files and ensure case IDs match filenames.
+- Zero foreground Dice: verify labels are aligned and non-empty. Use rare-class sampling and CE weights in the LoRA script if rare classes are underrepresented.
+- Missing labels or images: verify split files and ensure case IDs match filenames.
 
-## Notes on reproducibility
-
-Most training scripts set a fixed random seed (default 42). The LoRA script also logs detailed run configuration and optimizer settings so runs are repeatable.
