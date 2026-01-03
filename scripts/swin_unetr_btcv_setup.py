@@ -505,15 +505,20 @@ def create_hvsmr_loaders(
     min_fg_vox: int = 0,
     crop_max_tries: int = 1,
     enable_crop_rejection: bool = False,
+    train_ids: List[str] | None = None,
+    val_ids: List[str] | None = None,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create train/val loaders for HVSMR using nnU-Net split files and 3D patches.
     The train/val splits are read from the same txt files used by nnU-Net, so
     Swin-UNETR sees the same images as nnU-Net for a fair comparison.
     """
-    train_ids = load_case_ids(train_split_file)
-    val_ids = load_case_ids(val_split_file)
-    if overfit_debug:
+    ids_provided = train_ids is not None or val_ids is not None
+    if train_ids is None:
+        train_ids = load_case_ids(train_split_file)
+    if val_ids is None:
+        val_ids = load_case_ids(val_split_file)
+    if overfit_debug and not ids_provided:
         selected = overfit_case_id
         if selected is None:
             if train_ids:
@@ -524,12 +529,8 @@ def create_hvsmr_loaders(
                 raise RuntimeError("Overfit debug enabled but no case IDs are available from splits.")
         train_ids = [selected]
         val_ids = [selected]
-        print(f"[OVERFIT DEBUG] case_id={selected} train=1 val=1; augmentations disabled.")
+        print(f"[OVERFIT_DEBUG] case_id={selected} train=1 val=1")
     train_dicts = build_dataset_dicts(data_root, train_ids, label_root=label_root)
-    if overfit_debug:
-        debug_repeat_factor = 32
-        train_dicts = train_dicts * debug_repeat_factor
-        print(f"[OVERFIT DEBUG] Repeating train set {debug_repeat_factor}x -> {len(train_dicts)} samples for more steps per epoch.")
     val_dicts = build_dataset_dicts(data_root, val_ids, label_root=label_root)
 
     spatial_keys = ["image", "label"]

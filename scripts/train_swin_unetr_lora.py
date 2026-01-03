@@ -3,6 +3,7 @@
 Train Swin-UNETR with LoRA adapters on attention Q/V projections.
 Defaults freeze the backbone so only LoRA params (and any unfrozen heads) train.
 """
+# Compile check: python -m py_compile scripts/train_swin_unetr_lora.py scripts/swin_unetr_btcv_setup.py
 import argparse
 import json
 import math
@@ -35,6 +36,7 @@ from swin_unetr_btcv_setup import (  # noqa: E402
     NUM_CLASSES,
     create_model,
     create_hvsmr_loaders,
+    load_case_ids,
     log_and_validate_batch_shape,
     set_seed,
 )
@@ -104,6 +106,29 @@ def dump_run_config(args, output_dir: Path, extra: dict | None = None) -> None:
     print("[RUN CONFIG]")
     for line in lines:
         print(line)
+
+
+def _get_loss_attr(loss_fn: torch.nn.Module, dice_obj: object | None, name: str):
+    if dice_obj is not None and hasattr(dice_obj, name):
+        return getattr(dice_obj, name)
+    if hasattr(loss_fn, name):
+        return getattr(loss_fn, name)
+    return None
+
+
+def _summarize_loss_config(loss_fn: torch.nn.Module):
+    dice_obj = getattr(loss_fn, "dice", None) or getattr(loss_fn, "dice_loss", None)
+    include_background = _get_loss_attr(loss_fn, dice_obj, "include_background")
+    softmax = _get_loss_attr(loss_fn, dice_obj, "softmax")
+    to_onehot_y = _get_loss_attr(loss_fn, dice_obj, "to_onehot_y")
+    ce_obj = getattr(loss_fn, "ce", None) or getattr(loss_fn, "ce_loss", None)
+    ce_weights = None
+    if ce_obj is not None and hasattr(ce_obj, "weight"):
+        ce_weights = getattr(ce_obj, "weight")
+        if torch.is_tensor(ce_weights):
+            ce_weights = ce_weights.detach().cpu().tolist()
+    loss_type = type(loss_fn).__name__
+    return loss_type, include_background, softmax, to_onehot_y, ce_weights
 
 
 def train_epoch(
@@ -383,17 +408,19 @@ def main():
     dump_run_config(args, args.output_dir)
 
     # The train/val splits are read from the same txt files used by nnU-Net, so Swin-UNETR sees the same images as nnU-Net for a fair comparison.
+    train_ids = None
+    val_ids = None
     overfit_case_id = None
     if args.overfit_debug:
         if args.overfit_case_id:
             overfit_case_id = args.overfit_case_id
-        elif args.train_split and Path(args.train_split).is_file():
-            with Path(args.train_split).open("r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        overfit_case_id = line
-                        break
+        else:
+            train_ids = load_case_ids(str(args.train_split))
+            val_ids = load_case_ids(str(args.val_split))
+            if train_ids:
+                overfit_case_id = train_ids[0]
+            elif val_ids:
+                overfit_case_id = val_ids[0]
         if overfit_case_id is None:
             default_id = "pat17"
             img_root = Path(args.data_root) / "imagesTr"
@@ -404,6 +431,8 @@ def main():
             else:
                 print(f"[OVERFIT DEBUG] Default case_id {default_id} not found under {search_root}; using it anyway.")
                 overfit_case_id = default_id
+        train_ids = [overfit_case_id]
+        val_ids = [overfit_case_id]
         print(f"[OVERFIT_DEBUG] case_id={overfit_case_id} train=1 val=1")
         print(
             "[OVERFIT_DEBUG] Example command:\n"
@@ -420,6 +449,11 @@ def main():
             "    --max_train_batches 128 \\\n"
             f"    --overfit_debug --overfit_case_id {overfit_case_id}"
         )
+    if train_ids is None:
+        train_ids = load_case_ids(str(args.train_split))
+    if val_ids is None:
+        val_ids = load_case_ids(str(args.val_split))
+    print(f"[IDS] train_ids={train_ids} val_ids={val_ids}")
 
     enable_crop_rejection = args.overfit_debug or ("--min_fg_vox" in sys.argv or "--crop_max_tries" in sys.argv)
     min_fg_vox = args.min_fg_vox if enable_crop_rejection else 0
@@ -429,6 +463,8 @@ def main():
         data_root=str(args.data_root),
         train_split_file=str(args.train_split),
         val_split_file=str(args.val_split),
+        train_ids=train_ids,
+        val_ids=val_ids,
         label_root=str(args.label_root) if args.label_root else None,
         roi_size=roi_size,
         batch_size=args.batch_size,
@@ -441,6 +477,13 @@ def main():
     )
     log_and_validate_batch_shape(train_loader, roi_size)
     print(f"Summary: train cases={len(train_loader.dataset)}, val cases={len(val_loader.dataset)}, roi_size={roi_size}, batch_size={args.batch_size}")
+    if args.overfit_debug:
+        train_len = len(train_loader.dataset)
+        val_len = len(val_loader.dataset)
+        if train_len != 1 or val_len != 1:
+            raise ValueError(
+                f"[OVERFIT_DEBUG] expected 1 train/val case but got train={train_len} val={val_len}; check ID override placement."
+            )
 
     model = create_model(device=device, roi_size=roi_size)
     if args.pretrained_ckpt is not None:
@@ -534,12 +577,14 @@ def main():
         include_background=False,
         weight=ce_weights,
     )
+    loss_type, include_bg, softmax, to_onehot_y, ce_weights_print = _summarize_loss_config(loss_function)
     lambda_dice = getattr(loss_function, "lambda_dice", 1.0)
     lambda_ce = getattr(loss_function, "lambda_ce", 1.0)
     print(
         "[LOSS] "
-        f"dice(include_bg={loss_function.include_background}, softmax={loss_function.softmax}, onehot={loss_function.to_onehot_y}), "
-        f"ce(weights={ce_weights.detach().cpu().tolist()}), total=dice+ce, "
+        f"type={loss_type} "
+        f"dice(include_bg={include_bg}, softmax={softmax}, onehot={to_onehot_y}) "
+        f"ce(weights={ce_weights_print}) total=dice+ce, "
         f"lambda_dice={lambda_dice}, lambda_ce={lambda_ce}"
     )
     group_a_params: list[torch.nn.Parameter] = []
