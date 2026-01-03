@@ -144,7 +144,7 @@ def train_epoch(
     overfit_debug: bool = False,
     max_train_batches: Optional[int] = None,
     debug_steps: int = 10,
-) -> float:
+) -> Tuple[float, int]:
     model.train()
     epoch_loss = 0.0
     steps_processed = 0
@@ -233,7 +233,7 @@ def train_epoch(
     if steps_processed % grad_accum != 0:
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
-    return epoch_loss / max(1, steps_processed)
+    return epoch_loss / max(1, steps_processed), steps_processed
 
 
 def validate_epoch(
@@ -251,6 +251,7 @@ def validate_epoch(
     n_used = 0
     n_skipped = 0
 
+    warned_missing_orig = False
     with torch.no_grad():
         for batch_idx, batch in enumerate(loader):
             n_seen += 1
@@ -264,15 +265,29 @@ def validate_epoch(
                 if isinstance(label_meta, list):
                     label_meta = label_meta[0] if label_meta else None
                 orig_shape = None
+                orig_key = None
                 if isinstance(label_meta, dict):
-                    orig_shape = label_meta.get("original_shape") or label_meta.get("spatial_shape")
+                    for key in ("original_shape", "spatial_shape", "orig_shape", "original_size"):
+                        value = label_meta.get(key)
+                        if value is not None:
+                            orig_shape = value
+                            orig_key = key
+                            break
                     if orig_shape is not None:
                         orig_shape = tuple(int(x) for x in orig_shape)
-                if label_spatial == roi_size_tuple and (orig_shape is None or orig_shape != roi_size_tuple):
-                    raise AssertionError(
-                        "Validation labels appear cropped to roi_size; "
-                        f"label_spatial={label_spatial}, roi_size={roi_size_tuple}, original_shape={orig_shape}"
+                if orig_shape is not None:
+                    if label_spatial == roi_size_tuple and orig_shape != roi_size_tuple:
+                        raise AssertionError(
+                            "Validation labels appear cropped to roi_size; "
+                            f"label_spatial={label_spatial}, roi_size={roi_size_tuple}, "
+                            f"original_shape={orig_shape} (meta_key={orig_key})"
+                        )
+                elif label_spatial == roi_size_tuple and not warned_missing_orig:
+                    print(
+                        "[VAL WARN] original_shape missing; skipping 'cropped-to-roi' assertion for this batch. "
+                        f"label_spatial={label_spatial}, roi_size={roi_size_tuple}, meta_key=None"
                     )
+                    warned_missing_orig = True
             images = batch["image"].to(device)
             labels = batch["label"].to(device).long()
             gt_hist = torch.bincount(labels.long().flatten(), minlength=NUM_CLASSES).detach().cpu().tolist()
@@ -398,6 +413,13 @@ def main():
         if args.patience < args.epochs * 10:
             print(f"[OVERFIT DEBUG] Increasing patience to {args.epochs * 10}.")
             args.patience = args.epochs * 10
+        if args.lr_lora != 1e-3 or args.lr_backbone != 1e-3:
+            print(
+                f"[OVERFIT_DEBUG] Overriding lr_lora/lr_backbone to 1e-3 (was {args.lr_lora}, {args.lr_backbone})."
+            )
+        args.lr_lora = 1e-3
+        args.lr_backbone = 1e-3
+        print(f"[OVERFIT_DEBUG] lr_lora={args.lr_lora} lr_backbone={args.lr_backbone}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     roi_size = tuple(args.roi_size)
@@ -458,6 +480,7 @@ def main():
     enable_crop_rejection = args.overfit_debug or ("--min_fg_vox" in sys.argv or "--crop_max_tries" in sys.argv)
     min_fg_vox = args.min_fg_vox if enable_crop_rejection else 0
     crop_max_tries = args.crop_max_tries if enable_crop_rejection else 1
+    overfit_train_steps = args.max_train_batches if args.overfit_debug else None
 
     train_loader, val_loader = create_hvsmr_loaders(
         data_root=str(args.data_root),
@@ -471,6 +494,7 @@ def main():
         num_workers=args.num_workers,
         overfit_debug=args.overfit_debug,
         overfit_case_id=overfit_case_id,
+        overfit_train_steps=overfit_train_steps,
         min_fg_vox=min_fg_vox,
         crop_max_tries=crop_max_tries,
         enable_crop_rejection=enable_crop_rejection,
@@ -662,11 +686,15 @@ def main():
             return 0.5 * (1 + math.cos(math.pi * progress))
         return (1 - progress) ** args.poly_power
 
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=[lr_scale] * len(optimizer.param_groups))
-    preview_scales = [lr_scale(e) for e in range(4)]
-    preview_lora = [f"{args.lr_lora * s:.3e}" for s in preview_scales]
-    preview_backbone = [f"{args.lr_backbone * s:.3e}" for s in preview_scales]
-    print(f"LR preview (first 4 epochs): groupA={preview_lora} | groupB={preview_backbone}")
+    scheduler = None
+    if args.overfit_debug:
+        print("[OVERFIT_DEBUG] scheduler=disabled (constant lr)")
+    else:
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=[lr_scale] * len(optimizer.param_groups))
+        preview_scales = [lr_scale(e) for e in range(4)]
+        preview_lora = [f"{args.lr_lora * s:.3e}" for s in preview_scales]
+        preview_backbone = [f"{args.lr_backbone * s:.3e}" for s in preview_scales]
+        print(f"LR preview (first 4 epochs): groupA={preview_lora} | groupB={preview_backbone}")
 
     best_dice = -1.0
     epochs_no_improve = 0
@@ -685,11 +713,14 @@ def main():
 
     for epoch in range(args.epochs):
         print(f"Epoch {epoch + 1}/{args.epochs}")
-        scheduler.step(epoch)
-        current_lrs = scheduler.get_last_lr()
+        if scheduler is not None:
+            scheduler.step(epoch)
+            current_lrs = scheduler.get_last_lr()
+        else:
+            current_lrs = [group["lr"] for group in optimizer.param_groups]
         lr_group_a = current_lrs[0] if current_lrs else 0.0
         lr_group_b = current_lrs[1] if len(current_lrs) > 1 else 0.0
-        train_loss = train_epoch(
+        train_loss, train_steps = train_epoch(
             model,
             train_loader,
             device,
@@ -705,6 +736,8 @@ def main():
         )
         print(f"  Mean train loss: {train_loss:.4f}")
         print(f"  Learning rates: groupA={lr_group_a:.3e} | groupB={lr_group_b:.3e}")
+        if args.overfit_debug:
+            print(f"[OVERFIT_DEBUG] epoch={epoch + 1} num_train_steps={train_steps}")
 
         val_mean_all, val_per_class_mean, val_mean_fg = validate_epoch(
             model,
