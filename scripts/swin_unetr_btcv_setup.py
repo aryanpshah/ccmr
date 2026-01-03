@@ -507,6 +507,7 @@ def create_hvsmr_loaders(
     enable_crop_rejection: bool = False,
     train_ids: List[str] | None = None,
     val_ids: List[str] | None = None,
+    overfit_train_steps: int | None = None,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create train/val loaders for HVSMR using nnU-Net split files and 3D patches.
@@ -552,7 +553,23 @@ def create_hvsmr_loaders(
         ]
     )
     rand_crop_samples = 8 if overfit_debug else 2
-    crop_num_samples = 1 if overfit_debug else rand_crop_samples
+    if overfit_debug:
+        num_samples_per_case = 32
+        if train_dicts:
+            img_path = train_dicts[0].get("image")
+            if img_path:
+                try:
+                    img = nib.load(str(img_path))
+                    spatial_shape = tuple(int(x) for x in img.shape[:3])
+                    if spatial_shape == tuple(int(x) for x in roi_size):
+                        num_samples_per_case = 1
+                        print("[OVERFIT_DEBUG] full_volume=True (roi_size matches volume)")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[OVERFIT_DEBUG] full_volume_check_failed: {exc}")
+        print(f"[OVERFIT_DEBUG] num_samples_per_case={num_samples_per_case}")
+    else:
+        num_samples_per_case = rand_crop_samples
+    crop_num_samples = num_samples_per_case
     crop_ratios = [0.0, 1, 1, 1, 1, 1, 1, 1, 1]  # background never selected
     if len(crop_ratios) != hvsmr_num_classes:
         raise ValueError(
@@ -611,7 +628,21 @@ def create_hvsmr_loaders(
     train_ds = CacheDataset(data=train_dicts, transform=train_transforms, cache_rate=1.0, num_workers=num_workers)
     val_ds = CacheDataset(data=val_dicts, transform=val_transforms, cache_rate=1.0, num_workers=num_workers)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=torch.cuda.is_available())
+    train_sampler = None
+    if overfit_debug and overfit_train_steps is not None and overfit_train_steps > 0:
+        train_sampler = torch.utils.data.RandomSampler(
+            train_ds, replacement=True, num_samples=int(overfit_train_steps)
+        )
+        print(f"[OVERFIT_DEBUG] train_sampler=replacement num_samples={overfit_train_steps}")
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+    )
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=num_workers, pin_memory=torch.cuda.is_available())
 
     # Debug info
