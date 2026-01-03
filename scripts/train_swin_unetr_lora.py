@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 from datetime import datetime
+from itertools import cycle
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
@@ -149,8 +150,15 @@ def train_epoch(
     epoch_loss = 0.0
     steps_processed = 0
     optimizer.zero_grad(set_to_none=True)
-    for step, batch in enumerate(loader):
-        if max_train_batches is not None and step >= max_train_batches:
+    if max_train_batches is None or max_train_batches <= len(loader):
+        batch_iter = enumerate(loader)
+        enforce_max = max_train_batches
+    else:
+        loader_iter = cycle(loader)
+        batch_iter = ((step, next(loader_iter)) for step in range(max_train_batches))
+        enforce_max = None
+    for step, batch in batch_iter:
+        if enforce_max is not None and step >= enforce_max:
             break
         images = batch["image"].to(device)
         labels = batch["label"].to(device).long()
@@ -499,6 +507,7 @@ def main():
         crop_max_tries=crop_max_tries,
         enable_crop_rejection=enable_crop_rejection,
     )
+    print(f"[TRAIN LOADER] len(train_loader)={len(train_loader)} max_train_batches={args.max_train_batches}")
     log_and_validate_batch_shape(train_loader, roi_size)
     print(f"Summary: train cases={len(train_loader.dataset)}, val cases={len(val_loader.dataset)}, roi_size={roi_size}, batch_size={args.batch_size}")
     if args.overfit_debug:
