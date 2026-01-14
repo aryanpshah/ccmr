@@ -59,18 +59,18 @@ except ImportError:
 NUM_CLASSES = 9  # 9 classes total: label 0 = background, labels 1-8 = structures
 DEFAULT_FEATURE_SIZE = 48
 DEFAULT_SPACING = (1.0, 1.0, 1.0)  # HVSMR resampled spacing used in loaders
-DEFAULT_ROI_SIZE = (96, 96, 96)  # Default patch size; raise/lower depending on GPU memory
+DEFAULT_ROI_SIZE = (160, 160, 160)  # CRITICAL FIX: Increased from 96 to 160 for better whole-heart context
 DEFAULT_CLASS_WEIGHTS = (
-    0.05,
-    1.0,
-    1.0,
-    1.5,
-    2.0,
-    2.5,
-    3.0,
-    3.0,
-    3.0,
-)  # Background is lightly down-weighted; smallest structures are emphasized.
+    0.1,   # Background - low weight
+    1.0,   # Class 1
+    1.0,   # Class 2
+    1.0,   # Class 3
+    1.2,   # Class 4 - slightly higher
+    1.0,   # Class 5
+    1.5,   # Class 6 - higher (smaller structure)
+    2.0,   # Class 7 - higher (smaller structure)
+    2.0,   # Class 8 - higher (smaller structure)
+)  # Balanced class weights - not too aggressive to avoid training instability
 DEFAULT_PRETRAINED_URL = (
     # Public NGC bundle; may require `NGC_CLI_API_KEY` for authenticated download.
     "https://api.ngc.nvidia.com/v2/org/nvidia/teams/monaitoolkit/models/"
@@ -541,17 +541,20 @@ def create_hvsmr_loaders(
     hvsmr_num_classes = 9
     split_tokens = Path(train_split_file).stem.replace("-", "_").upper().split("_")
     is_l5_split = "L5" in split_tokens
-    if is_l5_split:
-        print("Detected L5 split -> using lighter augmentations (no elastic / heavy noise).")
+    is_l10_split = "L10" in split_tokens
+    if is_l5_split or is_l10_split:
+        print(f"Detected {split_tokens} split -> using STRONGER augmentations (increased for better generalization).")
+    # CRITICAL FIX: Increase augmentation strength 3x for small datasets (L5/L10)
+    # With only 5-10 training samples, need aggressive augmentation to prevent overfitting
     intensity_transforms = (
         [
-            RandScaleIntensityd(keys=["image"], factors=0.05, prob=0.5),
-            RandShiftIntensityd(keys=["image"], offsets=0.05, prob=0.5),
+            RandScaleIntensityd(keys=["image"], factors=0.15, prob=0.8),  # Was 0.05, now 0.15 (3x stronger)
+            RandShiftIntensityd(keys=["image"], offsets=0.15, prob=0.8),  # Was 0.05, now 0.15 (3x stronger)
         ]
-        if is_l5_split
+        if (is_l5_split or is_l10_split)
         else [
-            RandScaleIntensityd(keys=["image"], factors=0.1, prob=0.5),
-            RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
+            RandScaleIntensityd(keys=["image"], factors=0.12, prob=0.7),  # Was 0.1, now 0.12
+            RandShiftIntensityd(keys=["image"], offsets=0.12, prob=0.7),  # Was 0.1, now 0.12
         ]
     )
     rand_crop_samples = 8 if overfit_debug else 2
@@ -615,6 +618,18 @@ def create_hvsmr_loaders(
                 *intensity_transforms,
             ]
         )
+        # CRITICAL FIX: Add affine transform for better generalization (especially for small datasets)
+        from monai.transforms import RandAffined
+        train_ops.append(
+            RandAffined(
+                keys=spatial_keys,
+                prob=0.7,
+                rotate_range=(0.2, 0.2, 0.2),  # ±11 degrees per axis
+                scale_range=(0.15, 0.15, 0.15),  # ±15% scaling per axis
+                mode=("bilinear", "nearest"),
+                padding_mode="border",
+            )
+        )
     train_ops.append(EnsureTyped(keys=spatial_keys))
     train_transforms = Compose(train_ops)
 
@@ -626,6 +641,10 @@ def create_hvsmr_loaders(
             Orientationd(keys=["image", "label"], axcodes="RAS"),
             # MRI intensity normalization: z-score on non-zero voxels, channel-wise.
             NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
+            # FAST VALIDATION: Crop to roi_size for fast inference during training
+            # For final evaluation, use separate full-volume sliding window script
+            SpatialPadd(keys=["image", "label"], spatial_size=roi_size, mode=("reflect", "constant")),
+            ResizeWithPadOrCropd(keys=["image", "label"], spatial_size=roi_size),
             EnsureTyped(keys=["image", "label"]),
         ]
     )

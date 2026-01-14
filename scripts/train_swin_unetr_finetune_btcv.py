@@ -103,13 +103,14 @@ def main():
     parser.add_argument("--label_root", type=Path, default=None, help="Root dir for labels if not under data_root (defaults to data_root/labelsTr).")
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--lr", "--lr_max", dest="lr_max", type=float, default=6e-5, help="Initial / max learning rate.")
-    parser.add_argument("--lr_min", type=float, default=6e-6, help="Final learning rate at the end of training.")
-    parser.add_argument("--weight_decay", type=float, default=3e-3)
+    parser.add_argument("--lr", "--lr_max", dest="lr_max", type=float, default=3e-5, help="Initial / max learning rate. CRITICAL FIX: Reduced from 6e-5 to 3e-5")
+    parser.add_argument("--lr_min", type=float, default=3e-6, help="Final learning rate at the end of training. CRITICAL FIX: Reduced from 6e-6 to 3e-6")
+    parser.add_argument("--weight_decay", type=float, default=1e-2, help="Weight decay. CRITICAL FIX: Increased from 3e-3 to 1e-2")
+    parser.add_argument("--warmup_epochs", type=int, default=10, help="CRITICAL FIX: Number of warmup epochs for learning rate")
     parser.add_argument("--output_dir", type=Path, required=True, help="Directory for checkpoints/logs.")
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--roi_size", type=int, nargs=3, default=(128, 128, 128), metavar=("X", "Y", "Z"))
+    parser.add_argument("--roi_size", type=int, nargs=3, default=(160, 160, 160), metavar=("X", "Y", "Z"), help="CRITICAL FIX: Increased default from 128 to 160")
     parser.add_argument("--pretrained_ckpt", type=Path, required=True, help="Path to BTCV Swin-UNETR checkpoint (.pt/.pth).")
     parser.add_argument("--patience", type=int, default=60, help="Early stopping patience (validation epochs).")
     args = parser.parse_args()
@@ -148,20 +149,41 @@ def main():
     if frozen_samples:
         print(f"  [WARN] Found frozen params (should be none in full fine-tune): {frozen_samples}")
 
-    class_weights = torch.tensor([0.05, 1, 1, 1.5, 2, 2.5, 3, 3, 3], device=device)
-    print(f"Class weights (DiceCELoss CE component): {class_weights.tolist()}")
-    loss_function = DiceCELoss(
+    # CRITICAL FIX: Use improved class weights and DiceFocalLoss
+    from monai.losses import DiceFocalLoss
+    class_weights = torch.tensor([0.01, 5.0, 2.0, 3.0, 3.5, 4.0, 4.5, 5.0, 5.0], device=device)
+    print(f"CRITICAL FIX: Using DiceFocalLoss with improved class weights: {class_weights.tolist()}")
+    loss_function = DiceFocalLoss(
+        include_background=True,
         to_onehot_y=True,
         softmax=True,
-        include_background=True,
+        gamma=2.0,  # Focus on hard examples
+        lambda_dice=0.7,  # 70% Dice
+        lambda_focal=0.3,  # 30% Focal cross-entropy
         weight=class_weights,
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr_max, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(1, args.epochs), eta_min=args.lr_min
+    
+    # CRITICAL FIX: Add warmup scheduler for stable fine-tuning
+    from torch.optim.lr_scheduler import LinearLR, SequentialLR
+    warmup_scheduler = LinearLR(
+        optimizer,
+        start_factor=0.1,
+        total_iters=args.warmup_epochs
+    )
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=max(1, args.epochs - args.warmup_epochs),
+        eta_min=args.lr_min
+    )
+    scheduler = SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, cosine_scheduler],
+        milestones=[args.warmup_epochs]
     )
     print(
-        f"Mode: full fine tune | Optimizer: AdamW | lr range: {args.lr_max:.3e} -> {args.lr_min:.3e} | "
+        f"Mode: finetune | Loss: DiceFocalLoss (gamma=2.0) | Optimizer: AdamW | "
+        f"lr range: {args.lr_max:.3e} -> {args.lr_min:.3e} (warmup={args.warmup_epochs}) | "
         f"weight_decay: {args.weight_decay:.3e} | batch_size: {args.batch_size} | "
         f"roi_size: {roi_size} | max_epochs: {args.epochs} | early_stopping_patience: {args.patience}"
     )
