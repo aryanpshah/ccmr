@@ -58,3 +58,17 @@ echo
 /data/processed/
 /data/splits/_tmp_*
 /data/splits/overfit_one*.txt
+
+# Local artifacts
+logs/
+_nnunet_sandboxes/
+packages-microsoft-prod.deb
+
+# Large experiment outputs (keep local)
+runs/
+data/nnunet/
+data/processed/
+
+# venv
+.venv/
+
