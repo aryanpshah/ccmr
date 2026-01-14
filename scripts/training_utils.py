@@ -51,11 +51,37 @@ def compute_metrics(
     """
     Aggregate MONAI DiceMetric and compute mean Dice values while ignoring NaNs.
     Returns (mean_all, per_class_mean_list, mean_foreground).
+    
+    CRITICAL: Handle cases where some classes may not be present in validation set.
     """
     dice = dice_metric.aggregate()
     dice_np = dice.cpu().numpy()
-    mean_all = float(np.nanmean(dice_np))
-    per_class_mean = np.nanmean(dice_np.reshape(-1, num_classes), axis=0).tolist()
-    mean_fg = float(np.nanmean(per_class_mean[1:])) if num_classes > 1 else mean_all
+    
+    # dice_np shape is typically (num_samples, num_classes) or (num_classes,)
+    if dice_np.ndim == 1:
+        # Single sample case
+        per_class_mean = dice_np.tolist()
+    else:
+        # Multiple samples - compute per-class mean ignoring NaNs
+        # Replace zeros with NaN for cases where class wasn't present
+        per_class_mean = []
+        for c in range(num_classes):
+            class_dice = dice_np[:, c] if dice_np.ndim > 1 else [dice_np[c]]
+            # Filter out NaN values
+            valid_dice = [d for d in class_dice if not np.isnan(d)]
+            if valid_dice:
+                per_class_mean.append(float(np.mean(valid_dice)))
+            else:
+                per_class_mean.append(float('nan'))
+    
+    # Calculate overall mean (excluding NaN)
+    valid_all = [d for d in np.array(per_class_mean).flatten() if not np.isnan(d)]
+    mean_all = float(np.mean(valid_all)) if valid_all else 0.0
+    
+    # Calculate foreground mean (classes 1-8, excluding background class 0)
+    fg_dice = per_class_mean[1:] if num_classes > 1 else per_class_mean
+    valid_fg = [d for d in fg_dice if not np.isnan(d)]
+    mean_fg = float(np.mean(valid_fg)) if valid_fg else 0.0
+    
     dice_metric.reset()
     return mean_all, per_class_mean, mean_fg
