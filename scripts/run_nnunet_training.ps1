@@ -1,215 +1,220 @@
-# nnU-Net Training Script for Label Budget Experiments
-# Runs training for L5/L10/L20/L40 with specified seeds
-# Maintains consistent hyperparameters across all runs
-
 param(
-    [switch]$DryRun = $false
+    [string[]]$Budgets = @("L5","L10","L20","L40"),
+    [int]$Fold = 0,
+    [string]$Config3D = "3d_fullres",
+    [string]$Trainer = "nnUNetTrainer",
+    [string]$Plans = "nnUNetPlans",
+    [switch]$DryRun = $false,
+
+    # If true: if training is interrupted (Ctrl+C) or exits non-zero, skip to the next run instead of stopping the whole script.
+    [switch]$ContinueOnTrainFailure = $true,
+
+    # If true: archive any existing Dataset<ID>_* dirs out of nnUNet_raw/preprocessed/results before each seed run
+    [switch]$ArchiveBeforeEachSeed = $true
 )
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "nnU-Net Label Budget Training Pipeline" -ForegroundColor Cyan
-Write-Host "================================================" -ForegroundColor Cyan
+# Force correct ProjectRoot on Linux: /workspace/ccmr (parent of /scripts)
+$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+Write-Host "ProjectRoot: $ProjectRoot" -ForegroundColor Green
+
+# Export nnU-Net paths (equivalent to bash export nnUNet_raw=..., etc.)
+$env:nnUNet_raw          = Join-Path $ProjectRoot "data/nnunet/nnUNet_raw"
+$env:nnUNet_preprocessed = Join-Path $ProjectRoot "data/nnunet/nnUNet_preprocessed"
+$env:nnUNet_results      = Join-Path $ProjectRoot "data/nnunet/nnUNet_results"
+
+New-Item -ItemType Directory -Force -Path $env:nnUNet_raw          | Out-Null
+New-Item -ItemType Directory -Force -Path $env:nnUNet_preprocessed | Out-Null
+New-Item -ItemType Directory -Force -Path $env:nnUNet_results      | Out-Null
+
+Write-Host "nnUNet_raw:          $env:nnUNet_raw" -ForegroundColor White
+Write-Host "nnUNet_preprocessed: $env:nnUNet_preprocessed" -ForegroundColor White
+Write-Host "nnUNet_results:      $env:nnUNet_results" -ForegroundColor White
 Write-Host ""
 
-# Configuration
-$PROJECT_ROOT = $PSScriptRoot
-if ($PROJECT_ROOT -eq "") {
-    $PROJECT_ROOT = Get-Location
+# Logs
+$LogDir = Join-Path $ProjectRoot "logs/nnunet"
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+function Timestamp {
+    return (Get-Date -Format "yyyyMMdd_HHmmss")
 }
 
-$DATA_ROOT = Join-Path $PROJECT_ROOT "data"
-$LOG_DIR = Join-Path $PROJECT_ROOT "logs\nnunet"
-$NNUNET_ROOT = Join-Path $DATA_ROOT "nnunet"
+function Invoke-LoggedExe {
+    param(
+        [Parameter(Mandatory=$true)][string]$Exe,
+        [Parameter(Mandatory=$true)][string[]]$Args,
+        [Parameter(Mandatory=$true)][string]$LogPath,
+        [switch]$AllowFailure = $false
+    )
 
-# nnU-Net environment variables
-$env:nnUNet_raw = Join-Path $NNUNET_ROOT "nnUNet_raw"
-$env:nnUNet_preprocessed = Join-Path $NNUNET_ROOT "nnUNet_preprocessed"
-$env:nnUNet_results = Join-Path $NNUNET_ROOT "nnUNet_results"
+    $pretty = $Exe + " " + ($Args -join " ")
+    Write-Host "    CMD: $pretty" -ForegroundColor Gray
+    if ($DryRun) {
+        Write-Host "    [DRY RUN] skipping execution" -ForegroundColor Yellow
+        return $true
+    }
 
-Write-Host "Project root: $PROJECT_ROOT" -ForegroundColor Yellow
-Write-Host "nnUNet_raw: $env:nnUNet_raw" -ForegroundColor Yellow
-Write-Host "nnUNet_results: $env:nnUNet_results" -ForegroundColor Yellow
-Write-Host ""
+    try {
+        # Stream stdout+stderr to console AND write to log
+        & $Exe @Args 2>&1 | Tee-Object -FilePath $LogPath -Append
 
-# Create directories
-New-Item -ItemType Directory -Force -Path $LOG_DIR | Out-Null
-New-Item -ItemType Directory -Force -Path $env:nnUNet_raw | Out-Null
-New-Item -ItemType Directory -Force -Path $env:nnUNet_preprocessed | Out-Null
-New-Item -ItemType Directory -Force -Path $env:nnUNet_results | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            if ($AllowFailure) {
+                Write-Host "    [WARN] Exit code $LASTEXITCODE (continuing)." -ForegroundColor Yellow
+                return $false
+            }
+            throw "Command failed (exit $LASTEXITCODE): $pretty"
+        }
 
-# Define training configurations
-# Format: @{Budget='L5'; DatasetID=905; NumSeeds=3}
+        return $true
+    }
+    catch [System.Management.Automation.PipelineStoppedException] {
+        # This commonly happens when you hit Ctrl+C during a piped command
+        if ($AllowFailure) {
+            Write-Host "    [WARN] Interrupted (Ctrl+C) (continuing)." -ForegroundColor Yellow
+            return $false
+        }
+        throw
+    }
+    catch {
+        if ($AllowFailure) {
+            Write-Host "    [WARN] Failed/interrupted (continuing)." -ForegroundColor Yellow
+            return $false
+        }
+        throw
+    }
+}
+
+# --- AUTO-ARCHIVE (prevent seed overwrites + avoid DatasetID collisions) ---
+function Archive-NNUNetDataset {
+    param(
+        [int]$DatasetID,
+        [string]$Tag
+    )
+
+    $ArchiveRoot = Join-Path $ProjectRoot "data/nnunet/_archives"
+    $StampDir = Join-Path $ArchiveRoot $Tag
+
+    $Targets = @(
+        @{ Name = "nnUNet_results"; Path = $env:nnUNet_results }
+    )
+foreach ($t in $Targets) {
+        $src = $t.Path
+        if (-not (Test-Path $src)) { continue }
+
+        $dst = Join-Path $StampDir $t.Name
+        New-Item -ItemType Directory -Force -Path $dst | Out-Null
+
+        $pattern = "Dataset$DatasetID" + "_*"
+        $found = Get-ChildItem -Path $src -Directory -Filter $pattern -ErrorAction SilentlyContinue
+
+        foreach ($d in $found) {
+            $to = Join-Path $dst $d.Name
+            Write-Host "    [ARCHIVE] Moving $($d.FullName) -> $to" -ForegroundColor Yellow
+            Move-Item -Force -Path $d.FullName -Destination $to
+        }
+    }
+}
+# --- END AUTO-ARCHIVE ---
+
+# Define training configs
 $CONFIGS = @(
-    @{Budget='L5'; DatasetID=905; Seeds=@(0, 1, 2)},
-    @{Budget='L10'; DatasetID=910; Seeds=@(0, 1, 2)},
-    @{Budget='L20'; DatasetID=920; Seeds=@(0, 1)},
-    @{Budget='L40'; DatasetID=940; Seeds=@(0, 1)}
+    @{Budget='L5';  DatasetID=905; Seeds=@(0, 1)},
+    @{Budget='L10'; DatasetID=910; Seeds=@(0, 1)},
+    @{Budget='L20'; DatasetID=920; Seeds=@(0)},
+    @{Budget='L40'; DatasetID=940; Seeds=@(0)}
 )
 
-# Hyperparameters (kept consistent across all runs)
-$FOLD = 0  # Using fold 0 only
-$CONFIG_3D = "3d_fullres"
-$TRAINER = "nnUNetTrainer"
-$PLANS = "nnUNetPlans"
-
 Write-Host "Training Configuration:" -ForegroundColor Green
-Write-Host "  Fold: $FOLD" -ForegroundColor White
-Write-Host "  Trainer: $TRAINER" -ForegroundColor White
-Write-Host "  Plans: $PLANS" -ForegroundColor White
-Write-Host "  Config: $CONFIG_3D" -ForegroundColor White
+Write-Host "  Budgets: $($Budgets -join ', ')" -ForegroundColor White
+Write-Host "  Fold:    $Fold" -ForegroundColor White
+Write-Host "  Trainer: $Trainer" -ForegroundColor White
+Write-Host "  Plans:   $Plans" -ForegroundColor White
+Write-Host "  Config:  $Config3D" -ForegroundColor White
+Write-Host "  ContinueOnTrainFailure: $ContinueOnTrainFailure" -ForegroundColor White
+Write-Host "  ArchiveBeforeEachSeed:  $ArchiveBeforeEachSeed" -ForegroundColor White
 Write-Host ""
 
-# Function to setup dataset with specific seed
 function Setup-NNUNetDataset {
     param(
         [string]$Budget,
         [int]$DatasetID,
         [int]$Seed
     )
-    
+
+    $BudgetNum = [int]($Budget.TrimStart("L"))   # L5 -> 5
     $DatasetName = "Dataset${DatasetID}_HVSMR_${Budget}"
-    
+
+    if ($ArchiveBeforeEachSeed) {
+        $tag = ("{0}_seed{1}_{2}" -f $DatasetName, $Seed, (Timestamp))
+        Archive-NNUNetDataset -DatasetID $DatasetID -Tag $tag
+    }
+
     Write-Host "  Setting up dataset: $DatasetName (seed $Seed)" -ForegroundColor Cyan
-    
-    # Run setup script
-    $SetupCmd = "python scripts\setup_nnunet_dataset.py --dataset_id $DatasetID --budget $Budget --seed $Seed"
-    
-    if ($DryRun) {
-        Write-Host "    [DRY RUN] Would execute: $SetupCmd" -ForegroundColor Yellow
-    } else {
-        Write-Host "    Executing: $SetupCmd" -ForegroundColor Gray
-        Invoke-Expression $SetupCmd
-        
-        if ($LASTEXITCODE -ne 0) {
-            throw "Dataset setup failed for $DatasetName"
-        }
-    }
-}
 
-# Function to run preprocessing
-function Run-NNUNetPreprocessing {
-    param(
-        [int]$DatasetID
+    $setupArgs = @(
+        "scripts/setup_nnunet_dataset.py",
+        "--dataset-id", "$DatasetID",
+        "--label-budget", "$BudgetNum",
+        "--seed", "$Seed"
     )
-    
-    Write-Host "  Running preprocessing for dataset $DatasetID..." -ForegroundColor Cyan
-    
-    $PreprocCmd = "nnUNetv2_plan_and_preprocess -d $DatasetID --verify_dataset_integrity"
-    
-    if ($DryRun) {
-        Write-Host "    [DRY RUN] Would execute: $PreprocCmd" -ForegroundColor Yellow
+    $setupLog = Join-Path $LogDir ("setup_{0}_seed{1}_{2}.log" -f $DatasetName, $Seed, (Timestamp))
+
+    # Setup failures should stop the script (do not allow failure here)
+    [void](Invoke-LoggedExe -Exe "python" -Args $setupArgs -LogPath $setupLog)
+
+
+    # Ensure preprocessing exists (plans file + preprocessed data). Run ONCE per DatasetID (guarded by plans file).
+    $plansPath = Join-Path $env:nnUNet_preprocessed (Join-Path $DatasetName "nnUNetPlans.json")
+    if (-not (Test-Path $plansPath)) {
+        Write-Host "  Planning+preprocessing: $DatasetName (DatasetID=$DatasetID)" -ForegroundColor Cyan
+
+        $ppArgs = @(
+            "-d", "$DatasetID",
+            "--verify_dataset_integrity"
+        )
+        $ppLog = Join-Path $LogDir ("preprocess_{0}_{1}.log" -f $DatasetName, (Timestamp))
+        [void](Invoke-LoggedExe -Exe "nnUNetv2_plan_and_preprocess" -Args $ppArgs -LogPath $ppLog)
     } else {
-        Write-Host "    Executing: $PreprocCmd" -ForegroundColor Gray
-        Invoke-Expression $PreprocCmd
-        
-        if ($LASTEXITCODE -ne 0) {
-            throw "Preprocessing failed for dataset $DatasetID"
-        }
+        Write-Host "  Preprocess already exists: $plansPath" -ForegroundColor DarkGray
     }
+
+    return $DatasetName
 }
 
-# Function to run training
-function Run-NNUNetTraining {
+function Train-NNUNet {
     param(
-        [string]$Budget,
-        [int]$DatasetID,
+        [string]$DatasetName,
         [int]$Seed
     )
-    
-    $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-    $LogFile = Join-Path $LOG_DIR "nnunet_${Budget}_fold${FOLD}_seed${Seed}_${Timestamp}.log"
-    
-    Write-Host "  Training nnU-Net: Budget=$Budget, Seed=$Seed" -ForegroundColor Green
-    Write-Host "    Log file: $LogFile" -ForegroundColor Gray
-    
-    # Set seed for reproducibility
-    $env:PYTHONHASHSEED = $Seed
-    
-    $TrainCmd = "nnUNetv2_train $DatasetID $CONFIG_3D $FOLD --npz -tr $TRAINER -p $PLANS"
-    
-    if ($DryRun) {
-        Write-Host "    [DRY RUN] Would execute: $TrainCmd" -ForegroundColor Yellow
-        Write-Host "    [DRY RUN] Log would be saved to: $LogFile" -ForegroundColor Yellow
-    } else {
-        Write-Host "    Executing: $TrainCmd" -ForegroundColor Gray
-        Write-Host "    Started at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Gray
-        
-        # Run with output to both console and log file
-        $TrainCmd | Tee-Object -FilePath $LogFile | Invoke-Expression
-        
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "    WARNING: Training returned non-zero exit code" -ForegroundColor Yellow
-        }
-        
-        Write-Host "    Finished at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Gray
+
+    Write-Host "  Training: $DatasetName (seed $Seed)" -ForegroundColor Magenta
+
+    $trainArgs = @(
+        $DatasetName,
+        $Config3D,
+        "$Fold",
+        "-tr", $Trainer,
+        "-p", $Plans
+    )
+    $trainLog = Join-Path $LogDir ("train_{0}_seed{1}_{2}.log" -f $DatasetName, $Seed, (Timestamp))
+
+    $ok = Invoke-LoggedExe -Exe "nnUNetv2_train" -Args $trainArgs -LogPath $trainLog -AllowFailure:$ContinueOnTrainFailure
+    if (-not $ok) {
+        Write-Host "  [SKIP] Moving to next config/seed." -ForegroundColor Yellow
     }
-    
-    return $LogFile
 }
 
-# Main training loop
-$TotalRuns = ($CONFIGS | ForEach-Object { $_.Seeds.Count }) | Measure-Object -Sum | Select-Object -ExpandProperty Sum
+foreach ($cfg in $CONFIGS) {
+    if ($Budgets -notcontains $cfg.Budget) { continue }
 
-Write-Host "Starting training for $TotalRuns total runs..." -ForegroundColor Green
-Write-Host ""
-
-$RunNumber = 0
-
-foreach ($Config in $CONFIGS) {
-    $Budget = $Config.Budget
-    $DatasetID = $Config.DatasetID
-    $Seeds = $Config.Seeds
-    
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "Budget: $Budget (Dataset $DatasetID)" -ForegroundColor Cyan
-    Write-Host "Seeds: $($Seeds -join ', ')" -ForegroundColor Cyan
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host ""
-    
-    # Check if preprocessing is needed (only once per dataset)
-    $PreprocessedDir = Join-Path $env:nnUNet_preprocessed "Dataset${DatasetID}_HVSMR_${Budget}"
-    
-    if (-not (Test-Path $PreprocessedDir)) {
-        Write-Host "Preprocessing not found. Running preprocessing..." -ForegroundColor Yellow
-        
-        # Setup dataset with first seed for preprocessing
-        Setup-NNUNetDataset -Budget $Budget -DatasetID $DatasetID -Seed $Seeds[0]
-        
-        # Run preprocessing
-        Run-NNUNetPreprocessing -DatasetID $DatasetID
-        
-        Write-Host ""
-    } else {
-        Write-Host "Preprocessing already exists: $PreprocessedDir" -ForegroundColor Green
-        Write-Host ""
-    }
-    
-    # Train for each seed
-    foreach ($Seed in $Seeds) {
-        $RunNumber++
-        
-        Write-Host "----------------------------------------" -ForegroundColor White
-        Write-Host "Run $RunNumber/$TotalRuns : $Budget, Seed $Seed" -ForegroundColor White
-        Write-Host "----------------------------------------" -ForegroundColor White
-        
-        # Setup dataset with specific seed (for different train splits)
-        Setup-NNUNetDataset -Budget $Budget -DatasetID $DatasetID -Seed $Seed
-        
-        # Train
-        $LogFile = Run-NNUNetTraining -Budget $Budget -DatasetID $DatasetID -Seed $Seed
-        
-        Write-Host "  Completed: $Budget, Seed $Seed" -ForegroundColor Green
+    foreach ($seed in $cfg.Seeds) {
+        $ds = Setup-NNUNetDataset -Budget $cfg.Budget -DatasetID $cfg.DatasetID -Seed $seed
+        Train-NNUNet -DatasetName $ds -Seed $seed
         Write-Host ""
     }
 }
 
-Write-Host "================================================" -ForegroundColor Green
-Write-Host "All training runs completed!" -ForegroundColor Green
-Write-Host "================================================" -ForegroundColor Green
-Write-Host ""
-Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "  1. Run inference and evaluation: .\scripts\run_evaluation_pipeline.ps1" -ForegroundColor White
-Write-Host "  2. Check logs in: $LOG_DIR" -ForegroundColor White
-Write-Host ""
+Write-Host "Done." -ForegroundColor Green

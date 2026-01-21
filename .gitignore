@@ -72,3 +72,18 @@ data/processed/
 # venv
 .venv/
 
+
+# === local artifacts / archives ===
+_archives/
+*_ARCHIVE__*/
+_nnunet_sandboxes__ARCHIVE__*/
+logs/
+outputs/
+data/nnunet/
+nnUNet_*/
+**/*.bak_*
+**/*.bak*
+*.log
+*.pth
+*.pt
+*.ckpt

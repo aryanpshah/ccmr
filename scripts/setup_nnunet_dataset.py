@@ -173,18 +173,53 @@ def main() -> None:
         default=None,
         help="Optional dataset folder name override (e.g., Dataset905_HVSMR_L5).",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for train split selection (used to generate different train subsets for multiple runs).",
+    )
     args = parser.parse_args()
+    # ---------------------------
+    # SAFETY GUARD (collision control)
+    # Prevent non-L5 dataset setup from running unless explicitly allowed.
+    import os, sys
+    _allow = os.environ.get("ALLOW_NNUNET_NONL5_SETUP", "").strip() == "1"
+    _dsid = getattr(args, "dataset_id", None)
+    try:
+        _dsid = int(_dsid) if _dsid is not None else None
+    except Exception:
+        _dsid = None
 
+    # Always allow DatasetID 905 (L5). Everything else requires explicit opt-in.
+    if _dsid is not None and _dsid != 905 and not _allow:
+        print(
+            f"[GUARD] Refusing to setup DatasetID={_dsid} without ALLOW_NNUNET_NONL5_SETUP=1. "
+            f"This prevents collisions while your L5 run continues."
+        )
+        sys.exit(3)
+    # ---------------------------
+
+# ---------------------------
     if args.label_budget:
         budget_file = SPLIT_DIR / f"train_L{args.label_budget}.txt"
         train_ids = read_ids(budget_file)
         if not train_ids:
             raise RuntimeError(f"Label budget file missing or empty: {budget_file}")
+        
+        # If seed is non-zero, shuffle the train_ids to create different train subsets
+        if args.seed != 0:
+            import random
+            random.seed(args.seed)
+            train_ids = list(train_ids)
+            random.shuffle(train_ids)
+            print(f"Applied random seed {args.seed} to shuffle training cases")
+        
         test_ids = read_ids(SPLIT_DIR / "test_ids.txt")
         suggested_id = {5: 905, 10: 910, 20: 920, 40: 940}.get(args.label_budget, DEFAULT_DATASET_ID)
         dataset_id = args.dataset_id if args.dataset_id is not None else suggested_id
         dataset_name = args.dataset_name or f"Dataset{dataset_id:03d}_HVSMR_L{args.label_budget}"
-        print(f"Using label budget L={args.label_budget}: {len(train_ids)} training cases -> {dataset_name}")
+        print(f"Using label budget L={args.label_budget} (seed={args.seed}): {len(train_ids)} training cases -> {dataset_name}")
     else:
         train_ids = read_ids(SPLIT_DIR / "train_ids.txt") + read_ids(SPLIT_DIR / "val_ids.txt")
         test_ids = read_ids(SPLIT_DIR / "test_ids.txt")

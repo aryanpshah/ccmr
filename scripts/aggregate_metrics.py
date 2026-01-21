@@ -1,6 +1,8 @@
 """
 Aggregate per-case metrics and compute summary statistics (mean, CI) for each budget level.
 
+Uses bootstrap resampling for robust confidence intervals when sample sizes are small.
+
 Outputs:
 - Summary table with mean ± 95% CI for Dice and HD95 per structure per budget
 - Overall (foreground average) metrics
@@ -24,12 +26,15 @@ import pandas as pd
 from scipy import stats
 
 
-def compute_confidence_interval(
+def compute_bootstrap_ci(
     values: np.ndarray,
-    confidence: float = 0.95
+    confidence: float = 0.95,
+    n_bootstrap: int = 10000
 ) -> tuple[float, float, float]:
     """
-    Compute mean and confidence interval.
+    Compute mean and confidence interval using bootstrap resampling.
+    
+    Bootstrap is more robust for small sample sizes and doesn't assume normality.
     
     Returns:
         (mean, lower_bound, upper_bound)
@@ -42,11 +47,37 @@ def compute_confidence_interval(
     if len(values) == 1:
         return mean, mean, mean
     
-    # Use t-distribution for small samples
-    sem = stats.sem(values)
-    ci = stats.t.interval(confidence, len(values) - 1, loc=mean, scale=sem)
+    # Bootstrap resampling
+    rng = np.random.RandomState(42)  # Fixed seed for reproducibility
+    bootstrap_means = []
     
-    return mean, ci[0], ci[1]
+    for _ in range(n_bootstrap):
+        resample = rng.choice(values, size=len(values), replace=True)
+        bootstrap_means.append(np.mean(resample))
+    
+    bootstrap_means = np.array(bootstrap_means)
+    
+    # Compute percentile-based confidence intervals
+    alpha = 1 - confidence
+    ci_lower = np.percentile(bootstrap_means, 100 * alpha / 2)
+    ci_upper = np.percentile(bootstrap_means, 100 * (1 - alpha / 2))
+    
+    return mean, ci_lower, ci_upper
+
+
+def compute_confidence_interval(
+    values: np.ndarray,
+    confidence: float = 0.95
+) -> tuple[float, float, float]:
+    """
+    Compute mean and confidence interval using bootstrap resampling.
+    
+    Wrapper function that calls bootstrap CI computation.
+    
+    Returns:
+        (mean, lower_bound, upper_bound)
+    """
+    return compute_bootstrap_ci(values, confidence=confidence)
 
 
 def aggregate_by_budget_structure(

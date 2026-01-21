@@ -50,10 +50,10 @@ New-Item -ItemType Directory -Force -Path (Join-Path $FIGURES_DIR "qualitative")
 
 # Define configurations
 $CONFIGS = @(
-    @{Budget='L5'; DatasetID=905; Seeds=@(0, 1, 2)},
-    @{Budget='L10'; DatasetID=910; Seeds=@(0, 1, 2)},
-    @{Budget='L20'; DatasetID=920; Seeds=@(0, 1)},
-    @{Budget='L40'; DatasetID=940; Seeds=@(0, 1)}
+    @{Budget='L5'; DatasetID=905; Seeds=@(0, 1)},
+    @{Budget='L10'; DatasetID=910; Seeds=@(0, 1)},
+    @{Budget='L20'; DatasetID=920; Seeds=@(0)},
+    @{Budget='L40'; DatasetID=940; Seeds=@(0)}
 )
 
 $FOLD = 0
