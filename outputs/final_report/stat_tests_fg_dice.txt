@@ -1,0 +1,6 @@
+n_cases: 20
+comparison, mean_improvement, paired_t_p, wilcoxon_p (H1: second > first)
+L5->L10, 0.0974, 1.822e-05, 4.768e-06
+L10->L20, 0.0817, 0.0002741, 6.676e-05
+L20->L40, 0.0402, 0.004442, 0.0006046
+L5->L40, 0.2193, 4.256e-06, 9.537e-07
