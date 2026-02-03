@@ -1,89 +1,29 @@
-# Byte-compiled / cache
-__pycache__/
-*.py[cod]
+# large / generated
+data/
+outputs/test_preds/
+outputs/qualitative/*.nii.gz
+outputs/**/__pycache__/
+**/__pycache__/
+*.pth
+*.npz
+*.pkl
+*.nii.gz
+*.tar.gz
 
-# Virtual environments
+# pods / scratch
+_trash_old_nnunet_raw/
+
+# backups created during patching
+*.bak_*
+scripts/*.bak_*
+
+# --- local env / large artifacts ---
 .venv/
-.venv*/
-.venv3*/
-venv/
-ENV/
-*/.venv/
-*/.venv*/
-
-# Data outputs
-# /data/processed/
-# /data/splits/
-# /data/nnunet/
-/results/
-/logs/*
-!logs/nnunet/
-!logs/nnunet/*.metrics.json
-logs/swin_unetr/
-!logs/swin_unetr/*.json
+configs/
+logs/
+runs/
 pretrained/
-/checkpoints/
-
-# Large artifacts
-# *.npz
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Local NVIDIA NGC CLI binaries
 ngc-cli/
 ngccli_linux.zip
-ngc-cli.md5
-setup_history_raw.txt
-
-# Logs
-# logs/
-
-# Large pretrained model bundles and weights (installed via scripts)
-# pretrained/
-
-# Local setup history (optional; remove if you want this tracked)
-# setup_history_raw.txt
-
-# Local experiment artifacts
-runs/
-Finished*
-debug_pred_*.nii.gz
-data/splits/*subset*.txt
-*.exe
-echo
-
-# Local data artifacts
-/data/processed/
-/data/splits/_tmp_*
-/data/splits/overfit_one*.txt
-
-# Local artifacts
-logs/
-_nnunet_sandboxes/
 packages-microsoft-prod.deb
-
-# Large experiment outputs (keep local)
-runs/
-data/nnunet/
-data/processed/
-
-# venv
-.venv/
-
-
-# === local artifacts / archives ===
-_archives/
-*_ARCHIVE__*/
 _nnunet_sandboxes__ARCHIVE__*/
-logs/
-outputs/
-data/nnunet/
-nnUNet_*/
-**/*.bak_*
-**/*.bak*
-*.log
-*.pth
-*.pt
-*.ckpt

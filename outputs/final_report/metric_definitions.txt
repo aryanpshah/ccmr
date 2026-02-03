@@ -1,0 +1,7 @@
+Metric definitions used in evaluation:
+- Dice: computed per structure for labels 1..8 (background label 0 excluded).
+- Macro-average Dice: mean of Dice over the 8 structures (1..8) per case; then mean±SD over test cases.
+- HD95: symmetric 95th percentile Hausdorff distance computed on structure surfaces.
+- HD95 units: millimeters (mm), using NIfTI voxel spacing from SimpleITK GetSpacing().
+- Macro-average HD95: mean of HD95 over the 8 structures (1..8) per case (excluding NaNs when one mask is empty); then mean±SD over test cases.
+- No thresholding: multi-class predictions are discrete labels (argmax over softmax).

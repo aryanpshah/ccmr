@@ -1,0 +1,4 @@
+L5: approx wallclock 56.51 h  (from 2026-01-29 07:42:34 to 2026-01-31 16:13:20)
+L10: approx wallclock 56.25 h  (from 2026-01-29 07:57:04 to 2026-01-31 16:12:18)
+L20: approx wallclock 57.01 h  (from 2026-01-29 08:11:46 to 2026-01-31 17:12:04)
+L40: approx wallclock 56.45 h  (from 2026-01-29 08:13:51 to 2026-01-31 16:40:46)
