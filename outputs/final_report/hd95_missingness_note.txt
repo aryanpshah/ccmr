@@ -1,0 +1,5 @@
+HD95 undefined cases (due to GT absence):
+- Class 2: pat50, pat56 (GT missing class 2)
+- Class 4: pat49, pat50, pat56 (GT missing class 4)
+
+HD95 summary stats are computed over cases where GT contains the structure (and prediction/GT surfaces exist).
