@@ -27,3 +27,4 @@ ngc-cli/
 ngccli_linux.zip
 packages-microsoft-prod.deb
 _nnunet_sandboxes__ARCHIVE__*/
+outputs/metrics/
