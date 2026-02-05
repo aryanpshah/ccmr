@@ -1,0 +1,11 @@
+# Supplemental release: exclude generated artifacts
+# artifacts/  (uncomment to ignore generated artifacts; dummy CSVs are kept for validation)
+*.nii
+*.nii.gz
+*.mha
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+Thumbs.db

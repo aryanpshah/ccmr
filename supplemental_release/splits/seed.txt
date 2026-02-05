@@ -1,0 +1,4 @@
+1337
+
+Single shuffle with this seed. Label budgets L5, L10, L20, L40 are nested prefixes
+of the shuffled training pool (first 5, first 10, first 20, first 40 IDs).

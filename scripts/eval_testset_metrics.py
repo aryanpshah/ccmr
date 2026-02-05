@@ -67,7 +67,7 @@ def main():
         str(
             __import__("os").environ.get(
                 "nnUNet_raw",
-                "/workspace/ccmr/data/nnunet/nnUNet_raw"
+                "/path/to/nnUNet_raw"
             )
         )
     )

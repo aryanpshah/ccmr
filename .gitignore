@@ -1,31 +1,72 @@
-# large / generated
+# --- Model outputs / predictions / figures ---
+outputs/
+runs/
+predictions/
+inference_outputs/
+logs/
+wandb/
+lightning_logs/
+tensorboard/
+/figures/
+
+# --- Data directories ---
 data/
-outputs/test_preds/
-outputs/qualitative/*.nii.gz
-outputs/**/__pycache__/
-**/__pycache__/
-*.pth
-*.npz
-*.pkl
-*.nii.gz
+datasets/
+nnUNet_raw/
+nnUNet_preprocessed/
+nnUNet_results/
+
+# --- Environments ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+.python-version
+.conda/
+.ipynb_checkpoints/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Archives (except final supplemental zip) ---
+_archives/
+*.zip
+*.tar
 *.tar.gz
+!chil_supplemental_code.zip
 
-# pods / scratch
-_trash_old_nnunet_raw/
+# --- Large binaries ---
+*.nii
+*.nii.gz
+*.mha
+*.h5
+*.pt
+*.pth
+*.ckpt
+*.npz
+*.npy
+*.pkl
+*.safetensors
 
-# backups created during patching
+# --- Denylist: identity / personal ---
+notes/
+personal/
+drafts/
+emails/
+screenshots/
 *.bak_*
 scripts/*.bak_*
 
-# --- local env / large artifacts ---
-.venv/
-configs/
-logs/
-runs/
+# --- Project-specific ---
 pretrained/
 ngc-cli/
 ngccli_linux.zip
 packages-microsoft-prod.deb
+_trash_old_nnunet_raw/
 _nnunet_sandboxes__ARCHIVE__*/
-outputs/metrics/
-outputs/metrics/

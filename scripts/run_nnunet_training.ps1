@@ -15,7 +15,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Force correct ProjectRoot on Linux: /workspace/ccmr (parent of /scripts)
+# Force correct ProjectRoot (parent of /scripts)
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Write-Host "ProjectRoot: $ProjectRoot" -ForegroundColor Green
 

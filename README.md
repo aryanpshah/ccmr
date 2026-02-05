@@ -191,51 +191,6 @@ print('cuda', torch.cuda.is_available())
 PY
 ```
 
-## Remote GPU setup and MONAI installation (RunPod)
-
-### RunPod workflow (SSH + sync + run)
-
-1. Create a RunPod pod with a CUDA-enabled template and enough disk for data and checkpoints.
-2. Open the pod and copy the SSH command from the RunPod UI (use the provided host/port/key).
-3. SSH into the pod and set up the repo inside the workspace (most templates mount at `/workspace`):
-
-```bash
-cd /workspace
-git clone <repo-url> ccmr
-cd ccmr
-```
-
-4. Create and activate a virtual environment (see Environment setup above), then install dependencies.
-5. Copy data to the pod (examples):
-
-```bash
-# From your local machine
-rsync -av --progress data/ user@runpod:/workspace/ccmr/data/
-```
-
-```bash
-# Or scp for a single archive
-scp /path/to/data.zip user@runpod:/workspace/ccmr/
-```
-
-6. Keep training running with a session manager:
-
-```bash
-tmux new -s ccmr
-```
-
-Detach with `Ctrl+b` then `d`, and reattach with:
-
-```bash
-tmux attach -t ccmr
-```
-
-7. Monitor GPU usage:
-
-```bash
-nvidia-smi
-```
-
 ### MONAI setup checklist
 
 MONAI is installed via `requirements.txt`, but if you need to reinstall or update:

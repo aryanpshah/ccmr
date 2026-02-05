@@ -228,7 +228,7 @@ Get-Content logs\nnunet\*.log | Select-String "error"
 
 - **Documentation:** See `CLIENT_DELIVERABLES.md` for detailed info
 - **Logs:** Check `logs/nnunet/` for error messages
-- **nnU-Net Help:** https://github.com/MIC-DKFZ/nnUNet
+- **nnU-Net Help:** See nnU-Net documentation
 
 ---
 
