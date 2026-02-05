@@ -4,8 +4,20 @@ import os
 import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 from matplotlib.colors import ListedColormap
 
+
+STRUCT = {
+    1: "LV",
+    2: "RV",
+    3: "LA",
+    4: "RA",
+    5: "Aorta",
+    6: "PA",
+    7: "SVC",
+    8: "IVC",
+}
 def read_nii(p: Path) -> np.ndarray:
     return sitk.GetArrayFromImage(sitk.ReadImage(str(p)))  # z,y,x
 
@@ -39,6 +51,21 @@ def overlay(ax, img2d, seg2d, title):
     ax.imshow(seg2d, cmap=make_cmap(), interpolation="nearest", vmin=0, vmax=8)
     ax.set_title(title, fontsize=10)
     ax.axis("off")
+
+
+def add_legend(fig):
+    cmap = make_cmap()
+    handles = []
+    for k in range(1, 9):
+        handles.append(Patch(facecolor=cmap(k), edgecolor="black", label=STRUCT[k]))
+    fig.legend(
+        handles=handles,
+        loc="lower center",
+        ncol=8,
+        frameon=True,
+        fontsize=9,
+        bbox_to_anchor=(0.5, -0.02),
+    )
 
 def main():
     ap = argparse.ArgumentParser()
