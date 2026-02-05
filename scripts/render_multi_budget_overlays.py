@@ -63,7 +63,7 @@ def add_legend(fig):
         loc="lower center",
         ncol=8,
         frameon=True,
-        fontsize=9,
+        fontsize=10,
         bbox_to_anchor=(0.5, -0.02),
     )
 
@@ -129,8 +129,9 @@ def main():
     overlay(axes[3], img2d, pr20_2d, "L20")
     overlay(axes[4], img2d, pr40_2d, "L40")
 
-    fig.tight_layout()
-    out_p = outdir/f"{cid}_GT_L5_L10_L20_L40.png"
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    add_legend(fig)
+    out_p = outdir/f"{cid}_GT_L5_L10_L20_L40_legend.png"
     fig.savefig(out_p, dpi=args.dpi, bbox_inches="tight")
     plt.close(fig)
     print("[OK]", out_p)
