@@ -2,7 +2,8 @@
 set -euo pipefail
 set -o pipefail
 
-cd /workspace/ccmr
+# Run from the repository root.
+cd "$(dirname "$0")"
 source .venv/bin/activate
 
 COMMON_ARGS=(

@@ -27,7 +27,9 @@ def main():
     case = args.case
 
     # use any dataset raw that has labelsTs; pick L40 dataset (988) for GT
-    raw = glob.glob("/workspace/ccmr/data/nnunet/nnUNet_raw/Dataset988_*")[0]
+    import os
+    _raw_root = os.environ.get("nnUNet_raw", "data/nnunet/nnUNet_raw")
+    raw = glob.glob(f"{_raw_root}/Dataset988_*")[0]
     gt_path = Path(raw) / "labelsTs" / f"{case}.nii.gz"
     if not gt_path.exists():
         raise SystemExit(f"Missing GT: {gt_path}")

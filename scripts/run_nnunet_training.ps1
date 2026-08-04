@@ -15,7 +15,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Force correct ProjectRoot on Linux: /workspace/ccmr (parent of /scripts)
+# ProjectRoot is the repo root (parent of /scripts), resolved relative to this script
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Write-Host "ProjectRoot: $ProjectRoot" -ForegroundColor Green
 

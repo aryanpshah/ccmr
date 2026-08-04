@@ -2,7 +2,7 @@
 
 This repository implements a full experimental pipeline to study label efficiency for congenital cardiac MRI (CMR) segmentation on HVSMR-2.0 style data. It compares a strong nnU-Net baseline against MONAI Swin-UNETR variants (scratch, full fine-tune, and parameter-efficient LoRA) across multiple label budgets, with standardized preprocessing, splits, training, and evaluation.
 
-No personal or machine-specific information is included here.
+This repository contains code, generated figures, and aggregate result tables only. It does **not** redistribute the HVSMR-2.0 imaging data; see [DATA.md](DATA.md) for how to obtain it and for dataset attribution. Code is released under the MIT License (see [LICENSE](LICENSE)); the HVSMR-2.0 data is licensed separately under CC BY 4.0.
 
 ## Project overview
 
@@ -189,51 +189,6 @@ print('torch', torch.__version__)
 print('monai', monai.__version__)
 print('cuda', torch.cuda.is_available())
 PY
-```
-
-## Remote GPU setup and MONAI installation (RunPod)
-
-### RunPod workflow (SSH + sync + run)
-
-1. Create a RunPod pod with a CUDA-enabled template and enough disk for data and checkpoints.
-2. Open the pod and copy the SSH command from the RunPod UI (use the provided host/port/key).
-3. SSH into the pod and set up the repo inside the workspace (most templates mount at `/workspace`):
-
-```bash
-cd /workspace
-git clone <repo-url> ccmr
-cd ccmr
-```
-
-4. Create and activate a virtual environment (see Environment setup above), then install dependencies.
-5. Copy data to the pod (examples):
-
-```bash
-# From your local machine
-rsync -av --progress data/ user@runpod:/workspace/ccmr/data/
-```
-
-```bash
-# Or scp for a single archive
-scp /path/to/data.zip user@runpod:/workspace/ccmr/
-```
-
-6. Keep training running with a session manager:
-
-```bash
-tmux new -s ccmr
-```
-
-Detach with `Ctrl+b` then `d`, and reattach with:
-
-```bash
-tmux attach -t ccmr
-```
-
-7. Monitor GPU usage:
-
-```bash
-nvidia-smi
 ```
 
 ### MONAI setup checklist
@@ -515,3 +470,7 @@ Typical outputs by script:
 - Zero foreground Dice: verify labels are aligned and non-empty. Use rare-class sampling and CE weights in the LoRA script if rare classes are underrepresented.
 - Missing labels or images: verify split files and ensure case IDs match filenames.
 
+## License and attribution
+
+- **Code:** MIT License - see [LICENSE](LICENSE).
+- **Data (HVSMR-2.0):** CC BY 4.0. Not redistributed here. See [DATA.md](DATA.md) for the download link, required citation, and the list of modifications this pipeline makes to the original data.
